@@ -59,7 +59,6 @@ Scratch
 
 Inside a project, task commands may omit the project. Close never deletes files.
 Pi commands: /rotate checkpoints a project, /inbox lists requests, /reload reloads Pi.
-Guide: docs/agents.md in janpuc/dotfiles.
 `
 
 func main() {

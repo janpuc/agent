@@ -187,8 +187,7 @@ func TestHelpIsPrintedOnStdout(t *testing.T) {
 			t.Fatalf("%v wrote to stderr: %s", args, r.stderr)
 		}
 		for _, want := range []string{"Projects", "Requests", "Overview", "Tasks",
-			"agent ls", "ask <project> <text>", "task new [project]",
-			"Guide: docs/agents.md in janpuc/dotfiles."} {
+			"agent ls", "ask <project> <text>", "task new [project]"} {
 			if !strings.Contains(r.stdout, want) {
 				t.Fatalf("%v help lacks %q\n%s", args, want, r.stdout)
 			}
@@ -197,7 +196,7 @@ func TestHelpIsPrintedOnStdout(t *testing.T) {
 	// The dispatched forms print the same guide, including task without a subcommand.
 	for _, args := range [][]string{{"--launch", "task"}, {"--launch", "help"}} {
 		r := f.ok(f.internal(args...))
-		if !strings.Contains(r.stdout, "Guide: docs/agents.md in janpuc/dotfiles.") {
+		if !strings.Contains(r.stdout, "task new [project]") {
 			t.Fatalf("%v did not print the guide\n%s", args, r.stdout)
 		}
 	}

@@ -194,13 +194,10 @@ func environment(h Host, name, task, folder, state string) ([]string, string, er
 	if guard == "" {
 		guard = "personal"
 	}
-	namespace := project.MeminiNamespace
-	if namespace == "" {
-		prefix := host.MeminiPrefix
-		if prefix == "" {
-			prefix = "homelab"
-		}
-		namespace = prefix + "/" + name
+	// The namespace comes from the registry alone. A missing prefix fails rather than guess one.
+	namespace := h.Registry.Namespace(name)
+	if strings.HasPrefix(namespace, "/") {
+		return nil, "", fmt.Errorf("%s: no memini namespace or prefix in the registry", name)
 	}
 	meminiHome := host.MeminiHome
 	if meminiHome == "" {
