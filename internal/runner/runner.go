@@ -278,7 +278,8 @@ func projectSecrets(h Host, name string, project registry.Project, values map[st
 		}
 		var decoded string
 		if err := json.Unmarshal([]byte(strings.ReplaceAll(value, `\$`, "$")), &decoded); err != nil {
-			return err
+			// The decoder's message can quote part of the value, so name only the key.
+			return fmt.Errorf("Invalid secret value for %s in %s", key, path)
 		}
 		values[key] = decoded
 		loaded[key] = true
