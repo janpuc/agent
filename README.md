@@ -7,8 +7,8 @@ next to a project and rotates an agent into a fresh session with a handoff when 
 grows old.
 
 Status: early. The behavior is defined by the black-box test suite in `tests/`, which drives the
-command line, files and external tools of an implementation. The Go implementation in
-`cmd/agent` is being ported against that suite from an earlier Python runner.
+command line, files and external tools of an implementation. `cmd/agent` is the reference
+implementation; the suite also runs against the earlier Python runner while it is kept.
 
 ## Concepts
 

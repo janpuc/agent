@@ -169,6 +169,9 @@ func TestOpenLaunchesTheLegacyRunnerInItsPiTab(t *testing.T) {
 		must(t, json.Unmarshal([]byte(c.Args[3]), &body))
 		options := body.InitialWindows[0].Layout.Block.Options
 		want := []string{"fish", "-lc", "exec python3 " + f.path(".local/bin/agent-run") + " garden"}
+		if implementation.kind != "python" {
+			want = []string{"fish", "-lc", "exec " + f.path(".local/bin/agent") + " --run garden"}
+		}
 		if options.Shell != "none" || !reflect.DeepEqual(options.Command, want) {
 			t.Fatalf("pi tab command %q shell %q", options.Command, options.Shell)
 		}

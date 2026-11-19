@@ -1,6 +1,6 @@
 // Package project runs a project's workspace lifecycle on one execution host: bootstrap, member
-// restore, capacity, Rex tabs, adopt, archive and restart. The runner loop itself is still the
-// Python runner, which each pi tab starts.
+// restore, capacity, Rex tabs, adopt, archive and restart. Each pi tab it opens runs the Go
+// runner's loop.
 package project
 
 import (
@@ -153,9 +153,9 @@ func (h Host) Ensure(name string) error {
 	return h.selectSession(name, sid, windowID)
 }
 
-// runnerCommand is the legacy runner launch every pi tab uses.
+// runnerCommand is the launch every pi tab uses.
 func runnerCommand(home, name string) []string {
-	script := "exec python3 " + shellQuote(filepath.Join(home, ".local/bin/agent-run")) + " " + shellQuote(name)
+	script := "exec " + shellQuote(filepath.Join(home, ".local/bin/agent")) + " --run " + shellQuote(name)
 	return []string{"--shell=none", "--keep-open", "--", "fish", "-lc", script}
 }
 

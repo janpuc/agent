@@ -6,8 +6,6 @@
 //	AGENT_IMPL=go AGENT_BIN=/path/to/agent go test ./tests
 //	AGENT_IMPL=python AGENT_BIN=/path/to/agent-run go test ./tests
 //
-// While the port is in progress the Go command hands unported commands to AGENT_LEGACY.
-//
 // Without AGENT_BIN the suite builds ./cmd/agent and skips when it does not exist yet.
 package tests
 
@@ -161,10 +159,6 @@ func (f *fixture) environment() []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid",
-	}
-	// The Go command hands commands it does not implement yet to this legacy runner.
-	if legacy := os.Getenv("AGENT_LEGACY"); legacy != "" {
-		env = append(env, "AGENT_LEGACY="+legacy)
 	}
 	return append(env, f.extra...)
 }

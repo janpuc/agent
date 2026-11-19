@@ -1,5 +1,4 @@
-// Command agent opens and supervises project agents. Commands not ported to Go yet are handed
-// to the legacy runner.
+// Command agent opens and supervises project agents.
 package main
 
 import (
@@ -15,14 +14,53 @@ import (
 	"time"
 
 	"github.com/janpuc/agent/internal/digest"
-	"github.com/janpuc/agent/internal/legacy"
+	"github.com/janpuc/agent/internal/dispatch"
 	"github.com/janpuc/agent/internal/notes"
 	"github.com/janpuc/agent/internal/project"
 	"github.com/janpuc/agent/internal/registry"
 	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/rex"
+	"github.com/janpuc/agent/internal/runner"
 	"github.com/janpuc/agent/internal/workspace"
 )
+
+// helpText is the command guide. It names no site; the registry does.
+const helpText = `agent: project agents, dispatched over SSH from a client
+
+Projects
+  ls                    List projects and status                 agent ls
+  <project> | open       Open or start a project                  agent open home
+  up                    Start every active project               agent up
+  restart <project>|all Reload running agents on their sessions  agent restart all
+  adopt <project>       Record an existing workspace             agent adopt home
+  archive <project>     Stop a project and retain all files      agent archive home
+
+Requests
+  ask <project> <text>   Ask the system's owner                   agent ask dotfiles "Update the standards"
+  reply <project> <id> <text>  Reply from the receiving project    agent reply home <id> "Verified"
+
+Overview
+  todo                  Open questions from every STATE.md      agent todo
+  digest [hours]        Commits, pushes, merges, deploys, overrides  agent digest 48
+
+Tasks
+  task new [project] <TICKET|--slug slug> <brief>  Open a task      agent task new home --slug audit "Audit speakers"
+  task ls [project]     List tasks and status                    agent task ls
+  task ticket [project] <slug> <TICKET>  Attach a ticket            agent task ticket home audit HA-123
+  task close [project] <id>    Request a result and knowledge fold agent task close home audit
+  task restart [project] <id>  Resume the same task session        agent task restart home audit
+
+Scratch
+  scratch [new] [--slug slug] <brief>  Open free-standing work  agent scratch --slug tidy "Tidy notes"
+  scratch ls            List the scratch project's tasks          agent scratch ls
+  scratch fold <id> <project>  Fold a scratch task into a project agent scratch fold tidy home
+  scratch promote <id> <new-project>  Ask for a new project      agent scratch promote tidy garden
+  scratch restart <id>  Resume the same scratch task session    agent scratch restart tidy
+
+Inside a project, task commands may omit the project. Close never deletes files.
+Pi commands: /rotate checkpoints a project, /inbox lists requests, /reload reloads Pi.
+Guide: docs/agents.md in janpuc/dotfiles.
+`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -45,18 +83,28 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	switch {
-	case len(args) == 1 && args[0] == "--main-endpoint":
+	if helpRequest(args) {
+		fmt.Print(helpText)
+		return nil
+	}
+	// A launch-open without its project is a usage error that still shows the guide.
+	if len(args) >= 2 && args[0] == "--launch" && args[1] == "open" && len(args) != 3 {
+		fmt.Print(helpText)
+		return exitStatus{2}
+	}
+	if len(args) == 1 && args[0] == "--main-endpoint" {
 		// Before the registry read, so a broken registry can still be repaired by chezmoi update.
 		return mainEndpoint(home)
-	case len(args) > 0 && args[0] == "todo":
-		if len(args) != 1 {
-			return errors.New("usage: agent todo")
-		}
-		return todo(home)
-	case len(args) > 0 && (args[0] == "ls" || args[0] == "digest"):
-		return overview(home, args)
-	case len(args) > 0 && args[0] == "namespace":
+	}
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if len(args) > 0 && args[0] == "namespace" {
 		if len(args) > 2 {
 			return errors.New("usage: agent namespace [directory]")
 		}
@@ -70,29 +118,96 @@ func run(args []string) error {
 		}
 		fmt.Println(ns)
 		return nil
-	case len(args) > 0 && (args[0] == "--client-operator" || args[0] == "--client-jan"):
+	}
+	if reg.IsClient(host) {
+		if isScratchEntry(args) {
+			hub, err := reg.HubSite()
+			if err != nil {
+				return err
+			}
+			command, _ := projectCommand(args)
+			return clientScratch(hub, command)
+		}
+		return dispatch.Run(reg, home, host, args)
+	}
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if len(args) > 0 && (args[0] == "--client-operator" || args[0] == "--client-jan") {
 		return clientRequest(home, args)
-	case len(args) == 1 && (args[0] == "--remote-inbox" || args[0] == "--fetch-replies"):
-		return requestEntry(home, args, false, args)
-	case len(args) > 0 && (args[0] == "ask" || args[0] == "reply"):
-		return requestEntry(home, args, false, launchArgs(args))
-	case len(args) > 2 && args[0] == "--launch" && (args[1] == "ask" || args[1] == "reply"):
-		return requestEntry(home, args[1:], false, args)
+	}
+	switch {
+	case len(args) == 1 && args[0] == "--remote-inbox":
+		return requestEntry(home, args, false)
+	case len(args) == 1 && args[0] == "--fetch-replies":
+		return requestEntry(home, args, false)
+	case len(args) == 1 && args[0] == "--digest-daily":
+		return digestDaily(home, reg, host)
+	case len(args) == 3 && args[0] == "--task-run":
+		return taskRun(home, reg, host, args[1], args[2])
 	case len(args) == 2 && args[0] == "--run":
-		return legacy.Exec(home, args[1:])
+		return projectRun(home, reg, host, args[1])
 	case len(args) > 0 && args[0] == "--register":
 		return registerEntry(home, args)
-	case isTaskEntry(args):
-		return taskEntry(home, args)
-	case isScratchEntry(args):
-		return scratchEntry(home, args)
-	case isProjectEntry(args):
-		return projectEntry(home, args)
-	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
-		// Entry points for SSH forced commands, Rex tabs and laptop dispatch.
-		return legacy.Exec(home, args)
 	}
-	return legacy.Exec(home, append([]string{"--launch"}, args...))
+	command := args
+	if len(command) > 0 && command[0] == "--launch" {
+		command = command[1:]
+	}
+	if len(command) > 0 {
+		switch command[0] {
+		case "task":
+			if len(command) == 1 || command[1] == "-h" || command[1] == "--help" {
+				fmt.Print(helpText)
+				return nil
+			}
+			return taskEntry(home, command)
+		case "scratch":
+			return scratchEntry(home, command)
+		case "ask", "reply":
+			return requestEntry(home, command, false)
+		case "todo":
+			if len(command) != 1 {
+				return errors.New("usage: agent todo")
+			}
+			return todo(home)
+		case "ls", "digest":
+			return overview(home, command)
+		}
+		if isProjectEntry(command) {
+			return projectEntry(home, command)
+		}
+	}
+	return errors.New("Usage: agent-run <registered-project>")
+}
+
+// helpRequest reports the forms that print the command guide instead of running a command.
+func helpRequest(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	forms := [][]string{
+		{"-h"}, {"--help"}, {"help"},
+		{"--launch"}, {"--launch", "help"}, {"--launch", "-h"}, {"--launch", "--help"},
+		{"--launch", "task"}, {"--launch", "task", "-h"}, {"--launch", "task", "--help"},
+		{"task"}, {"task", "-h"}, {"task", "--help"},
+	}
+	for _, form := range forms {
+		if len(form) != len(args) {
+			continue
+		}
+		equal := true
+		for i := range form {
+			if form[i] != args[i] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return true
+		}
+	}
+	return false
 }
 
 // mainEndpoint is the coordinator's forced SSH command. It accepts exactly three operations and
@@ -155,24 +270,11 @@ func clientRequest(home string, args []string) error {
 	if len(rest) == 0 || rest[0] != "ask" {
 		return errors.New("--client-operator is only for laptop requests")
 	}
-	return requestEntry(home, rest, true, launchArgs(args))
+	return requestEntry(home, rest, true)
 }
 
-// launchArgs is the shape older commands hand the legacy runner: a launch flag added to a bare
-// command or to an operator flag that came without one.
-func launchArgs(args []string) []string {
-	if len(args) > 1 && (args[0] == "--client-operator" || args[0] == "--client-jan") && args[1] != "--launch" {
-		return append([]string{args[0], "--launch"}, args[1:]...)
-	}
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		return append([]string{"--launch"}, args...)
-	}
-	return args
-}
-
-// requestEntry runs the request commands. A dispatch-only client, or a host the registry does not
-// list, still hands the command to the legacy runner.
-func requestEntry(home string, args []string, clientOperator bool, fallback []string) error {
+// requestEntry runs the request commands on this host.
+func requestEntry(home string, args []string, clientOperator bool) error {
 	reg, err := registry.Load(home)
 	if err != nil {
 		return err
@@ -180,12 +282,6 @@ func requestEntry(home string, args []string, clientOperator bool, fallback []st
 	host, err := registry.HostName()
 	if err != nil {
 		return err
-	}
-	if reg.IsClient(host) {
-		return legacy.Exec(home, fallback)
-	}
-	if _, ok := reg.Hosts[host]; !ok {
-		return legacy.Exec(home, fallback)
 	}
 	root, err := reg.Root(home, host)
 	if err != nil {
@@ -243,18 +339,7 @@ func isProjectEntry(args []string) bool {
 	return !strings.HasPrefix(command[0], "-")
 }
 
-// isTaskEntry reports whether args name a task subcommand. A bare task and its help stay with the
-// legacy runner, which prints the command guide.
-func isTaskEntry(args []string) bool {
-	command, _ := projectCommand(args)
-	if len(command) < 2 || command[0] != "task" {
-		return false
-	}
-	return command[1] != "-h" && command[1] != "--help"
-}
-
-// taskEntry runs the task commands on this host. A dispatch-only client still hands them to the
-// legacy runner's SSH fan-out.
+// taskEntry runs the task commands on this host.
 func taskEntry(home string, args []string) error {
 	reg, err := registry.Load(home)
 	if err != nil {
@@ -263,9 +348,6 @@ func taskEntry(home string, args []string) error {
 	host, err := registry.HostName()
 	if err != nil {
 		return err
-	}
-	if reg.IsClient(host) {
-		return legacy.Exec(home, launchArgs(args))
 	}
 	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
@@ -289,8 +371,7 @@ func isScratchEntry(args []string) bool {
 	return len(command) > 0 && command[0] == "scratch"
 }
 
-// scratchEntry runs the scratch commands on this host against the host's scratch project. A
-// dispatch-only client sends them to the hub in the forms the legacy runner already knows.
+// scratchEntry runs the scratch commands on this host against the host's scratch project.
 func scratchEntry(home string, args []string) error {
 	reg, err := registry.Load(home)
 	if err != nil {
@@ -301,13 +382,6 @@ func scratchEntry(home string, args []string) error {
 		return err
 	}
 	command, _ := projectCommand(args)
-	if reg.IsClient(host) {
-		hub, err := reg.HubSite()
-		if err != nil {
-			return err
-		}
-		return clientScratch(hub, command)
-	}
 	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
 		return fmt.Errorf("Host %s is not registered as an execution host", host)
@@ -349,8 +423,7 @@ func quoteWord(word string) string {
 	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
 
-// projectEntry runs the workspace lifecycle commands on this host. A dispatch-only client still
-// hands them to the legacy runner's SSH fan-out.
+// projectEntry runs the workspace lifecycle commands on this host.
 func projectEntry(home string, args []string) error {
 	reg, err := registry.Load(home)
 	if err != nil {
@@ -359,9 +432,6 @@ func projectEntry(home string, args []string) error {
 	host, err := registry.HostName()
 	if err != nil {
 		return err
-	}
-	if reg.IsClient(host) {
-		return legacy.Exec(home, launchArgs(args))
 	}
 	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
@@ -430,9 +500,6 @@ func registerEntry(home string, args []string) error {
 	host, err := registry.HostName()
 	if err != nil {
 		return err
-	}
-	if reg.IsClient(host) {
-		return legacy.Exec(home, args)
 	}
 	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
@@ -534,8 +601,7 @@ func todo(home string) error {
 	return nil
 }
 
-// overview runs ls and digest, which report on this host's projects. A dispatch-only client still
-// needs the legacy runner's SSH fan-out.
+// overview runs ls and digest, which report on this host's projects.
 func overview(home string, args []string) error {
 	reg, err := registry.Load(home)
 	if err != nil {
@@ -546,7 +612,7 @@ func overview(home string, args []string) error {
 		return err
 	}
 	if _, ok := reg.Hosts[host]; !ok {
-		return legacy.Exec(home, append([]string{"--launch"}, args...))
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
 	}
 	root, err := reg.Root(home, host)
 	if err != nil {
@@ -587,6 +653,94 @@ func overview(home string, args []string) error {
 		return err
 	}
 	fmt.Print(text)
+	return nil
+}
+
+// projectRun is the generation loop a project's pi tab starts. It refuses a project that is
+// archived or not initialized yet before starting Pi.
+func projectRun(home string, reg *registry.Registry, host, name string) error {
+	if _, ok := reg.Projects[name]; !ok || reg.ProjectHost(name) != host {
+		return errors.New("Usage: agent-run <registered-project>")
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	lifecycle, err := reg.Lifecycle(home, name)
+	if err != nil {
+		return err
+	}
+	if lifecycle == "archived" {
+		return fmt.Errorf("%s: archived, not starting", name)
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	record, err := workspace.Initialization(home, root, name)
+	if err != nil {
+		return err
+	}
+	if record == nil || record.State != "initialized" || !workspace.IsDir(filepath.Join(root, name)) {
+		return fmt.Errorf("%s: initialization or restore needed, use agent %s", name, name)
+	}
+	hostPath(home)
+	code, err := runner.Loop(runner.Host{Registry: reg, Home: home, Name: host, Root: root}, name, "")
+	if err != nil {
+		return err
+	}
+	return exitStatus{code}
+}
+
+// taskRun is the generation loop a task's own tab starts. The task's metadata and its closed
+// marker decide whether Pi starts at all.
+func taskRun(home string, reg *registry.Registry, host, name, task string) error {
+	if _, ok := reg.Projects[name]; !ok || reg.ProjectHost(name) != host {
+		return fmt.Errorf("Unknown project: %s", name)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	if err := requests.Target(reg, home, name); err != nil {
+		return err
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	hostPath(home)
+	code, err := runner.Loop(runner.Host{Registry: reg, Home: home, Name: host, Root: root}, name, task)
+	if err != nil {
+		return err
+	}
+	return exitStatus{code}
+}
+
+// digestDaily writes today's digest to the state directory and prints its path.
+func digestDaily(home string, reg *registry.Registry, host string) error {
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	text, err := digest.Render(digest.Source{
+		Root:     root,
+		Host:     host,
+		Projects: reg.Names(host),
+		Log:      filepath.Join(registry.StateDir(home), "actions.jsonl"),
+		Hours:    24,
+		Now:      time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(registry.StateDir(home), "digest")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".md")
+	if err := workspace.AtomicWrite(path, []byte(text)); err != nil {
+		return err
+	}
+	fmt.Println(path)
 	return nil
 }
 

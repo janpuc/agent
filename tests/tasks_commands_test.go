@@ -93,6 +93,9 @@ func TestTaskStartsTheTaskRunnerInItsOwnTab(t *testing.T) {
 		t.Fatal("task new did not create a task:audit tab")
 	}
 	want := "exec python3 " + f.path(".local/bin/agent-run") + " --task-run garden audit"
+	if implementation.kind != "python" {
+		want = "exec " + f.path(".local/bin/agent") + " --task-run garden audit"
+	}
 	if flag(created.Args, "-c") != target || lastArg(*created) != want ||
 		!contains(created.Args, "--focus=false") || !contains(created.Args, "--shell=none") ||
 		!contains(created.Args, "--keep-open") {

@@ -288,8 +288,8 @@ func (h Host) taskAction(name, action string, rest []string, foldTo string) erro
 	return nil
 }
 
-// startTask launches the legacy runner in the task's own Rex tab. It leaves a live unmanaged
-// process and an ambiguous tab alone, and deletes nothing.
+// startTask launches the task's runner in its own Rex tab. It leaves a live unmanaged process and
+// an ambiguous tab alone, and deletes nothing.
 func (h Host) startTask(name, task string) error {
 	folder := filepath.Join(h.Root, name)
 	meta, err := workspace.ReadTask(folder, task)
@@ -350,9 +350,9 @@ func (h Host) startTask(name, task string) error {
 	return rex.CloseBlock(session.ID, blocks[0].ID)
 }
 
-// taskRunnerCommand is the legacy runner launch a task tab uses.
+// taskRunnerCommand is the launch a task tab uses.
 func taskRunnerCommand(home, name, task string) []string {
-	words := []string{"python3", filepath.Join(home, ".local/bin/agent-run"), "--task-run", name, task}
+	words := []string{filepath.Join(home, ".local/bin/agent"), "--task-run", name, task}
 	for i, word := range words {
 		words[i] = shellQuote(word)
 	}
