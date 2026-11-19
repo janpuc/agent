@@ -41,14 +41,14 @@ func Git(folder string, args ...string) (string, error) {
 // MemberPath is the directory of a member in the workspace.
 func MemberPath(folder, name string) (string, error) {
 	if !registry.ValidName(name) || reservedMembers[name] {
-		return "", fmt.Errorf("invalid or reserved member name: %s", name)
+		return "", fmt.Errorf("Invalid or reserved member name: %s", name)
 	}
 	target := filepath.Join(folder, name)
 	if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("member path escapes workspace: %s", target)
+		return "", fmt.Errorf("Member path escapes workspace: %s", target)
 	}
 	if resolved, err := filepath.EvalSymlinks(target); err == nil && filepath.Dir(resolved) != folder {
-		return "", fmt.Errorf("member path escapes workspace: %s", target)
+		return "", fmt.Errorf("Member path escapes workspace: %s", target)
 	}
 	return target, nil
 }
@@ -57,7 +57,7 @@ func MemberPath(folder, name string) (string, error) {
 func RequireGitRoot(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("not a workspace directory: %s", path)
+		return fmt.Errorf("Not a workspace directory: %s", path)
 	}
 	top, err := Git(path, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -71,7 +71,7 @@ func RequireGitRoot(path string) error {
 		return err
 	}
 	if top != root {
-		return fmt.Errorf("not a git root: %s", path)
+		return fmt.Errorf("Not a Git root: %s", path)
 	}
 	return nil
 }
@@ -80,7 +80,7 @@ func RequireGitRoot(path string) error {
 func Members(folder string) ([]Member, error) {
 	path := filepath.Join(folder, ".gitmodules")
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("symlinked membership file: %s", path)
+		return nil, fmt.Errorf("Symlinked membership file: %s", path)
 	}
 	if _, err := os.Stat(path); err != nil {
 		return nil, nil
@@ -108,7 +108,7 @@ func Members(folder string) ([]Member, error) {
 			order = append(order, name)
 		}
 		if _, duplicate := values[field]; duplicate {
-			return nil, fmt.Errorf("duplicate submodule field: %s", key)
+			return nil, fmt.Errorf("Duplicate submodule field: %s", key)
 		}
 		values[field] = value
 	}
@@ -118,13 +118,13 @@ func Members(folder string) ([]Member, error) {
 		values := entries[name]
 		path, registered := values["path"]
 		if !registry.ValidName(name) || !registered || values["url"] == "" {
-			return nil, fmt.Errorf("invalid submodule metadata: %s", name)
+			return nil, fmt.Errorf("Invalid submodule metadata: %s", name)
 		}
 		if _, err := MemberPath(folder, path); err != nil {
 			return nil, err
 		}
 		if paths[path] {
-			return nil, fmt.Errorf("duplicate member path: %s", path)
+			return nil, fmt.Errorf("Duplicate member path: %s", path)
 		}
 		paths[path] = true
 		marker := "false"
@@ -134,15 +134,143 @@ func Members(folder string) ([]Member, error) {
 			}
 		}
 		if marker != "true" && marker != "false" {
-			return nil, fmt.Errorf("invalid local-only marker: %s", name)
+			return nil, fmt.Errorf("Invalid local-only marker: %s", name)
 		}
 		localOnly := marker == "true"
 		if strings.HasPrefix(values["url"], "local-only://") && !localOnly {
-			return nil, fmt.Errorf("missing local-only marker: %s", name)
+			return nil, fmt.Errorf("Missing local-only marker: %s", name)
 		}
 		members = append(members, Member{Name: name, Path: path, URL: values["url"], LocalOnly: localOnly})
 	}
 	return members, nil
+}
+
+// recordedCommit is the commit a workspace's gitlink records for a member.
+func recordedCommit(folder string, member Member) (string, error) {
+	output, err := Git(folder, "ls-tree", "HEAD", "--", member.Path)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(output)
+	if len(fields) < 3 || fields[0] != "160000" || fields[1] != "commit" {
+		return "", fmt.Errorf("%s: no committed gitlink, checkpoint the workspace first", member.Name)
+	}
+	return fields[2], nil
+}
+
+// RestoreMember checks an existing member or clones a missing remote member at the commit the
+// workspace records. A local-only member is data that only a backup can bring back.
+func RestoreMember(folder string, member Member) error {
+	target, err := MemberPath(folder, member.Path)
+	if err != nil {
+		return err
+	}
+	if Exists(target) {
+		return RequireGitRoot(target)
+	}
+	if member.LocalOnly {
+		return fmt.Errorf("%s: local-only member missing, restore needed from backup", member.Name)
+	}
+	commit, err := recordedCommit(folder, member)
+	if err != nil {
+		return err
+	}
+	temp, err := os.MkdirTemp(filepath.Dir(folder), ".agent-restore-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temp)
+	checkout := filepath.Join(temp, "repo")
+	if _, err := Git(folder, "clone", "--no-checkout", "--", member.URL, checkout); err != nil {
+		return err
+	}
+	if _, err := Git(checkout, "cat-file", "-e", commit+"^{commit}"); err != nil {
+		if _, err := Git(checkout, "fetch", "origin", commit); err != nil {
+			return err
+		}
+	}
+	// This is a disposable clone, including if its default branch has this name.
+	if _, err := Git(checkout, "checkout", "-B", "agent-restored", commit); err != nil {
+		return err
+	}
+	if Exists(target) || IsSymlink(target) {
+		return fmt.Errorf("Member appeared during recovery, leaving it alone: %s", target)
+	}
+	return os.Rename(checkout, target)
+}
+
+// RegisterRepository registers and stages a member. The caller commits the workspace checkpoint.
+func RegisterRepository(folder, project, name, url string) error {
+	if err := RequireGitRoot(folder); err != nil {
+		return err
+	}
+	target, err := MemberPath(folder, name)
+	if err != nil {
+		return err
+	}
+	registered, err := Members(folder)
+	if err != nil {
+		return err
+	}
+	for _, member := range registered {
+		if member.Name == name || member.Path == name {
+			return fmt.Errorf("Member already registered: %s", name)
+		}
+	}
+	if !Exists(target) {
+		temp, err := os.MkdirTemp(filepath.Dir(folder), ".agent-register-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(temp)
+		checkout := filepath.Join(temp, "repo")
+		if url != "" {
+			if _, err := Git(folder, "clone", "--", url, checkout); err != nil {
+				return err
+			}
+		} else {
+			if _, err := Git(folder, "init", "--initial-branch=main", checkout); err != nil {
+				return err
+			}
+			if _, err := Git(checkout, "commit", "--allow-empty", "-m", "Initialize local repository"); err != nil {
+				return err
+			}
+		}
+		if Exists(target) || IsSymlink(target) {
+			return fmt.Errorf("Member appeared during registration: %s", target)
+		}
+		if err := os.Rename(checkout, target); err != nil {
+			return err
+		}
+	}
+	if err := RequireGitRoot(target); err != nil {
+		return err
+	}
+	if _, err := Git(target, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return err
+	}
+	modules := filepath.Join(folder, ".gitmodules")
+	if _, err := Git(folder, "config", "--file", modules, "submodule."+name+".path", name); err != nil {
+		return err
+	}
+	link := url
+	if link == "" {
+		link = "local-only://" + project + "/" + name
+	}
+	if _, err := Git(folder, "config", "--file", modules, "submodule."+name+".url", link); err != nil {
+		return err
+	}
+	if url == "" {
+		// The marker key names no site, so a workspace stays portable between them.
+		if _, err := Git(folder, "config", "--file", modules, "submodule."+name+".agent-local-only", "true"); err != nil {
+			return err
+		}
+	}
+	if _, err := Git(folder, "-c", "advice.addEmbeddedRepo=false", "add", "--", ".gitmodules", name); err != nil {
+		return err
+	}
+	_, err = Git(folder, "submodule", "init", "--", name)
+	return err
 }
 
 // RepositoryStatus describes every repository in the workspace, one line each.
