@@ -88,7 +88,8 @@ func baseRegistry() map[string]any {
 			"remote": map[string]any{"project": "field", "host": "outpost", "identity": "~/.ssh/field-inbox"},
 		},
 		"hosts": map[string]any{
-			"hub":     map[string]any{"root": "~/Projects", "meminiPrefix": "lab", "meminiHome": "none", "guard": "personal"},
+			"hub": map[string]any{"root": "~/Projects", "meminiPrefix": "lab", "meminiHome": "none", "guard": "personal",
+				"scratchProject": "workbench"},
 			"outpost": map[string]any{"root": "~/Field", "meminiPrefix": "field", "meminiHome": "none", "guard": "work"},
 		},
 		"defaults": map[string]any{
@@ -96,9 +97,10 @@ func baseRegistry() map[string]any {
 			"meminiPrefix": "lab", "tasks": map[string]any{"maxOpen": 4},
 		},
 		"projects": map[string]any{
-			"admin":  map[string]any{"host": "hub", "lifecycle": "active"},
-			"garden": map[string]any{"host": "hub", "lifecycle": "active"},
-			"field":  map[string]any{"host": "outpost", "lifecycle": "active", "meminiNamespace": "field"},
+			"admin":     map[string]any{"host": "hub", "lifecycle": "active"},
+			"garden":    map[string]any{"host": "hub", "lifecycle": "active"},
+			"workbench": map[string]any{"host": "hub", "lifecycle": "active"},
+			"field":     map[string]any{"host": "outpost", "lifecycle": "active", "meminiNamespace": "field"},
 		},
 	}
 }
