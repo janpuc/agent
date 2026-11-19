@@ -35,6 +35,8 @@ type Task struct {
 	Opened      string  `json:"opened"`
 	Status      string  `json:"status"`
 	FoldRequest string  `json:"foldRequest,omitempty"`
+	// FoldTo is the project that takes a scratch task's fold instead of its own project.
+	FoldTo string `json:"foldTo,omitempty"`
 }
 
 // TicketName is the attached ticket, or none when the task has no ticket.
