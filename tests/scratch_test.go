@@ -220,3 +220,35 @@ func TestScratchIsAReservedProjectName(t *testing.T) {
 	f.saveRegistry()
 	f.ok(f.agent("task", "ls"))
 }
+
+func TestScratchOnAClientRunsOnTheHub(t *testing.T) {
+	skipWithoutScratch(t)
+	f := newFixture(t, "laptop")
+	f.ok(f.agent("scratch", "it's a try"))
+	f.ok(f.agent("scratch", "fold", "s-1", "garden"))
+	calls := f.calls("ssh")
+	if len(calls) != 2 {
+		t.Fatalf("ssh calls: %v", calls)
+	}
+	want := []string{"hub", `env -u PI_PROJECT fish -lc 'agent scratch '\''it'\''\'\'''\''s a try'\'''`}
+	if strings.Join(calls[0].Args, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("first call %q", calls[0].Args)
+	}
+	if calls[1].Args[1] != "env -u PI_PROJECT fish -lc 'agent scratch fold s-1 garden'" {
+		t.Fatalf("second call %q", calls[1].Args)
+	}
+}
+
+func TestScratchShortFormsOpenTasks(t *testing.T) {
+	skipWithoutScratch(t)
+	f := newFixture(t, "hub")
+	workbench := f.workspace("workbench")
+	f.ok(f.agent("scratch", "--slug", "short", "Short form"))
+	f.ok(f.agent("scratch", "Brief only"))
+	if !f.exists(filepath.Join(workbench, "tasks/short/BRIEF.md")) {
+		t.Fatal("scratch --slug without new opened nothing")
+	}
+	if !strings.Contains(f.ok(f.agent("scratch", "ls")).stdout, "workbench s-") {
+		t.Fatal("a lone brief opened no generated task")
+	}
+}

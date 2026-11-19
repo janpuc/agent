@@ -302,18 +302,11 @@ func scratchEntry(home string, args []string) error {
 	}
 	command, _ := projectCommand(args)
 	if reg.IsClient(host) {
-		if len(command) > 1 && (command[1] == "fold" || command[1] == "promote") {
-			return errors.New("run agent scratch fold|promote on the host")
-		}
 		hub, err := reg.HubSite()
 		if err != nil {
 			return err
 		}
-		scratch, err := reg.ScratchProject(hub)
-		if err != nil {
-			return err
-		}
-		return legacy.Exec(home, clientScratchArgs(scratch, command))
+		return clientScratch(hub, command)
 	}
 	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
@@ -334,20 +327,26 @@ func scratchEntry(home string, args []string) error {
 	return hostWork.Scratch(scratch, reg.Defaults.Tasks, command[1:])
 }
 
-// clientScratchArgs translates a scratch command into the legacy --launch form that dispatches it
-// to the scratch project on the hub.
-func clientScratchArgs(scratch string, command []string) []string {
-	switch {
-	case len(command) == 1:
-		return []string{"--launch", "open", scratch}
-	case command[1] == "ls":
-		return []string{"--launch", "task", "ls", scratch}
-	case command[1] == "new":
-		return append([]string{"--launch", "task", "new", scratch}, command[2:]...)
-	case command[1] == "restart" && len(command) == 3:
-		return []string{"--launch", "task", "restart", scratch, command[2]}
+// clientScratch runs the scratch command on the hub, where the scratch project lives. It is sent
+// as one quoted command line for the hub's login shell, without the client's project identity.
+func clientScratch(hub string, command []string) error {
+	words := make([]string, len(command)+1)
+	words[0] = "agent"
+	for i, word := range command {
+		words[i+1] = quoteWord(word)
 	}
-	return append([]string{"--launch"}, command...)
+	remote := "env -u PI_PROJECT fish -lc " + quoteWord(strings.Join(words, " "))
+	cmd := exec.Command("ssh", hub, remote)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// quoteWord quotes one word for a POSIX or fish shell as shlex.quote does.
+func quoteWord(word string) string {
+	if word != "" && strings.Trim(word, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
+		return word
+	}
+	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
 
 // projectEntry runs the workspace lifecycle commands on this host. A dispatch-only client still

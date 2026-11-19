@@ -50,6 +50,13 @@ func (h Host) Scratch(scratch string, defaults map[string]int, args []string) er
 		}
 		return h.taskAction(scratch, "restart", []string{args[1]}, "")
 	}
+	// A lone brief is the short form of new.
+	if len(args) == 1 && !strings.HasPrefix(args[0], "-") {
+		return h.newScratchTask(scratch, args, defaults)
+	}
+	if len(args) == 3 && args[0] == "--slug" {
+		return h.newScratchTask(scratch, args, defaults)
+	}
 	return errors.New("Usage: agent scratch [new [--slug slug] <brief>|ls|fold <id> <project>|" +
 		"promote <id> <new-project>|restart <id>]")
 }
