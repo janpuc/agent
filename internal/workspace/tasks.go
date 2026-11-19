@@ -7,15 +7,42 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
-// taskIdentity is a task folder name: a ticket such as GARDEN-12 or a slug such as audit.
-var taskIdentity = regexp.MustCompile(`^(?:[A-Z][A-Z0-9]{1,9}-[0-9]{1,7}|[a-z0-9][a-z0-9-]{1,39})$`)
+const (
+	ticketPattern = `[A-Z][A-Z0-9]{1,9}-[0-9]{1,7}`
+	slugPattern   = `[a-z0-9][a-z0-9-]{1,39}`
+)
+
+var (
+	ticketIdentity = regexp.MustCompile(`^` + ticketPattern + `$`)
+	slugIdentity   = regexp.MustCompile(`^` + slugPattern + `$`)
+	// taskIdentity is a task folder name: a ticket such as GARDEN-12 or a slug such as audit.
+	taskIdentity = regexp.MustCompile(`^(?:` + ticketPattern + `|` + slugPattern + `)$`)
+)
+
+// ValidTicket reports whether identity is a ticket a task may be named after.
+func ValidTicket(identity string) bool { return ticketIdentity.MatchString(identity) }
+
+// ValidSlug reports whether identity is a slug a task may be named after.
+func ValidSlug(identity string) bool { return slugIdentity.MatchString(identity) }
 
 // Task is a task's validated metadata. The brief and state files carry the rest.
 type Task struct {
-	ID     string
-	Status string
+	ID          string  `json:"id"`
+	Ticket      *string `json:"ticket"`
+	Opened      string  `json:"opened"`
+	Status      string  `json:"status"`
+	FoldRequest string  `json:"foldRequest,omitempty"`
+}
+
+// TicketName is the attached ticket, or none when the task has no ticket.
+func (t Task) TicketName() string {
+	if t.Ticket == nil || *t.Ticket == "" {
+		return "none"
+	}
+	return *t.Ticket
 }
 
 // TaskState is the directory of a task's runtime state.
@@ -50,16 +77,59 @@ func ReadTask(folder, task string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	var meta map[string]any
+	var meta Task
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
-	id, _ := meta["id"].(string)
-	status, _ := meta["status"].(string)
-	if id != task || (status != "open" && status != "closing" && status != "closed") || !IsDir(path) {
+	if meta.ID != task || (meta.Status != "open" && meta.Status != "closing" && meta.Status != "closed") ||
+		!IsDir(path) {
 		return nil, fmt.Errorf("%s: invalid task state, restore needed", task)
 	}
-	return &Task{ID: id, Status: status}, nil
+	return &meta, nil
+}
+
+// SaveTask writes a task's metadata.
+func SaveTask(folder string, task *Task) error {
+	data, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return err
+	}
+	return AtomicWrite(filepath.Join(TaskState(folder, task.ID), "meta.json"), append(data, '\n'))
+}
+
+// UpdateBrief rewrites a task brief's front matter from its metadata. The body is untouched.
+func UpdateBrief(folder string, task *Task) error {
+	path, err := TaskFolder(folder, task.ID)
+	if err != nil {
+		return err
+	}
+	path = filepath.Join(path, "BRIEF.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	text := string(data)
+	rest := strings.TrimPrefix(text, "---\n")
+	end := strings.Index(rest, "\n---\n")
+	if rest == text || end < 0 {
+		return fmt.Errorf("%s: missing task front matter", path)
+	}
+	body := rest[end+len("\n---\n"):]
+	fields := []string{
+		"id: " + task.ID,
+		"ticket: " + task.TicketName(),
+		"opened: " + orNone(task.Opened),
+		"status: " + task.Status,
+	}
+	return AtomicWrite(path, []byte("---\n"+strings.Join(fields, "\n")+"\n---\n"+body))
+}
+
+// orNone renders an empty metadata value the way a brief spells it.
+func orNone(value string) string {
+	if value == "" {
+		return "none"
+	}
+	return value
 }
 
 // TaskRecords reads every task's metadata in name order.

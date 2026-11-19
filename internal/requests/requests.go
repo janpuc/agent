@@ -117,6 +117,12 @@ func resolved(path string) string {
 	return filepath.Join(resolved(parent), filepath.Base(path))
 }
 
+// Store writes a request record to target's inbox, or to the work reply queue when the hub
+// holds a reply for the remote project.
+func Store(reg *registry.Registry, home, host, root, target, id string, item any) error {
+	return write(reg, home, host, root, target, id, item)
+}
+
 // write puts a request in target's inbox, or in the work reply queue when the hub holds a reply
 // for the remote project.
 func write(reg *registry.Registry, home, host, root, target, id string, item any) error {

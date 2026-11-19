@@ -8,8 +8,8 @@ import (
 	"github.com/janpuc/agent/internal/registry"
 )
 
-// statePage is the initial STATE.md of a project and of every task.
-const statePage = "# State\n\n## Current work\n\n## Verified state\n\n## Open threads\n\n## Pending approvals\n\n## Next actions\n"
+// StatePage is the initial STATE.md of a project and of every task.
+const StatePage = "# State\n\n## Current work\n\n## Verified state\n\n## Open threads\n\n## Pending approvals\n\n## Next actions\n"
 
 // Bootstrap returns the project's workspace, creating it from the registry's seed repositories
 // when it was never initialized. An existing workspace is only inspected.
@@ -88,7 +88,7 @@ func initialize(home, root, name, folder string, project registry.Project) error
 	files := map[string]string{
 		".gitignore":       ".agent/\n.worktrees/\n",
 		"notes/PROJECT.md": "# " + name + "\n\n## Facts\n\n## Operating constraints\n\n## Systems\n\n## Knowledge index\n",
-		"notes/STATE.md":   statePage,
+		"notes/STATE.md":   StatePage,
 		"mise.toml":        mise,
 	}
 	for path, text := range files {
