@@ -214,4 +214,9 @@ func TestScratchIsAReservedProjectName(t *testing.T) {
 	f.saveRegistry()
 	f.fails(f.agent("task", "ls"), "reserved")
 	f.fails(f.agent("scratch"), "reserved")
+
+	// The host's own scratch project may carry the name.
+	f.registry["hosts"].(map[string]any)["hub"].(map[string]any)["scratchProject"] = "scratch"
+	f.saveRegistry()
+	f.ok(f.agent("task", "ls"))
 }

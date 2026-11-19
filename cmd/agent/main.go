@@ -481,7 +481,10 @@ func validateProjects(reg *registry.Registry, home, host string) error {
 		return err
 	}
 	for _, name := range reg.Names(host) {
-		if !registry.ValidName(name) || reservedNames[name] || name == operator {
+		// A project may be called scratch only when it is its host's scratch project, so agent
+		// scratch and agent <project> open the same thing.
+		shadows := reservedNames[name] && !(name == "scratch" && reg.Hosts[host].ScratchProject == name)
+		if !registry.ValidName(name) || shadows || name == operator {
 			return errors.New("Project names must be single path components and not reserved command names or the operator")
 		}
 		if _, err := reg.Lifecycle(home, name); err != nil {
