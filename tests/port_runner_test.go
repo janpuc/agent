@@ -143,9 +143,9 @@ func TestClosedTaskLoopEndsWithoutStartingPi(t *testing.T) {
 // no agent command itself; every target runs its own Go command.
 func TestClientDispatchCommandLines(t *testing.T) {
 	f := newFixture(t, "laptop")
-	program := "agent"
+	program, operator := "agent", "--client-operator"
 	if implementation.kind == "python" {
-		program = "python3 .local/bin/agent-run"
+		program, operator = "python3 .local/bin/agent-run", "--client-jan"
 	}
 	f.ok(f.internal("--launch", "ls"))
 	f.ok(f.internal("--launch", "ask", "garden", "Please", "check"))
@@ -154,7 +154,7 @@ func TestClientDispatchCommandLines(t *testing.T) {
 	want := []struct{ host, remote string }{
 		{"hub", "env -u PI_PROJECT fish -lc '" + program + " --launch ls'"},
 		{"outpost", "env -u PI_PROJECT fish -lc '" + program + " --launch ls'"},
-		{"hub", "env -u PI_PROJECT fish -lc '" + program + " --client-jan --launch ask garden Please check'"},
+		{"hub", "env -u PI_PROJECT fish -lc '" + program + " " + operator + " --launch ask garden Please check'"},
 		{"hub", "env PI_PROJECT=garden fish -lc '" + program + " --launch task new garden --slug audit Audit'"},
 	}
 	if len(calls) != len(want) {
@@ -199,5 +199,85 @@ func TestHelpIsPrintedOnStdout(t *testing.T) {
 		if !strings.Contains(r.stdout, "task new [project]") {
 			t.Fatalf("%v did not print the guide\n%s", args, r.stdout)
 		}
+	}
+}
+
+// TestRunnerRefusesANullProviderPolicy checks that an explicit null is invalid wherever it is
+// set, instead of being read as an absent policy that allows every provider.
+func TestRunnerRefusesANullProviderPolicy(t *testing.T) {
+	for _, where := range []string{"host", "project", "defaults"} {
+		t.Run(where, func(t *testing.T) {
+			f := newFixture(t, "hub")
+			f.open("garden")
+			switch where {
+			case "host":
+				f.registry["hosts"].(map[string]any)["hub"].(map[string]any)["providers"] = nil
+			case "project":
+				f.project("garden")["providers"] = nil
+			case "defaults":
+				delete(f.project("garden"), "providers")
+				f.registry["defaults"].(map[string]any)["providers"] = nil
+			}
+			f.saveRegistry()
+			f.fails(f.with("OPENAI_API_KEY=openai").runner("garden"), "Invalid providers policy")
+			if len(f.calls("pi")) != 0 {
+				t.Fatal("Pi started with a null provider policy")
+			}
+		})
+	}
+}
+
+// TestRunnerRefusesANullSecret checks that a secret must be a JSON string. null is not an
+// empty value.
+func TestRunnerRefusesANullSecret(t *testing.T) {
+	f := newFixture(t, "hub")
+	f.project("garden")["secrets"] = map[string]any{"HA_TOKEN": "op://vault/item/field"}
+	f.saveRegistry()
+	f.open("garden")
+	f.write(".local/state/ai/projects/garden.env", "HA_TOKEN=null\n")
+	r := f.runner("garden")
+	if r.code == 0 || len(f.calls("pi")) != 0 {
+		t.Fatalf("Pi started with a null secret\n%s", r)
+	}
+	if implementation.kind != "python" && !strings.Contains(r.stderr, "Invalid secret value for HA_TOKEN") {
+		t.Fatalf("stderr %s", r.stderr)
+	}
+}
+
+// TestRunnerTreatsBracketsInTheRootAsLiteral checks that the session lookup does not read a
+// workspace path as a glob pattern, which could hide a session and replay its handoff.
+func TestRunnerTreatsBracketsInTheRootAsLiteral(t *testing.T) {
+	for _, root := range []string{"[team]", "[open"} {
+		t.Run(root, func(t *testing.T) {
+			f := newFixture(t, "hub")
+			f.registry["hosts"].(map[string]any)["hub"].(map[string]any)["root"] = "~/" + root
+			f.saveRegistry()
+			f.ok(f.agent("garden"))
+			garden := filepath.Join(f.home, root, "garden")
+			f.write(filepath.Join(garden, ".agent/handoff-1.md"), "replayed handoff")
+			sessions := f.path(".pi/agent/sessions/--" + strings.ReplaceAll(strings.TrimPrefix(garden, "/"), "/", "-") + "--")
+			f.write(filepath.Join(sessions, "2026-11-19T10-00-00_garden-1.jsonl"), "")
+			f.ok(f.runner("garden"))
+			calls := f.calls("pi")
+			if len(calls) != 1 || lastArg(calls[0]) == "replayed handoff" {
+				t.Fatalf("pi calls %v", calls)
+			}
+		})
+	}
+}
+
+// TestProjectWithoutAnyHostRunsOnTheHub checks the fallback when neither the project nor the
+// defaults name a host.
+func TestProjectWithoutAnyHostRunsOnTheHub(t *testing.T) {
+	f := newFixture(t, "hub")
+	delete(f.registry["defaults"].(map[string]any), "host")
+	for _, name := range []string{"garden"} {
+		delete(f.project(name), "host")
+	}
+	f.saveRegistry()
+	f.open("garden")
+	f.ok(f.runner("garden"))
+	if len(f.calls("pi")) != 1 {
+		t.Fatal("a project without a host did not run on the hub")
 	}
 }

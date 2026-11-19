@@ -49,7 +49,7 @@ type Host struct {
 	MeminiHome    string `json:"meminiHome"`
 	Guard         string `json:"guard"`
 	MaxAgents     *int   `json:"maxAgents"`
-	Providers     any    `json:"providers"`
+	Providers     Policy `json:"providers"`
 	// ScratchProject is the project that holds free-standing work on this host.
 	ScratchProject string `json:"scratchProject"`
 }
@@ -59,7 +59,7 @@ type Defaults struct {
 	Model        string         `json:"model"`
 	Thinking     string         `json:"thinking"`
 	MeminiPrefix string         `json:"meminiPrefix"`
-	Providers    any            `json:"providers"`
+	Providers    Policy         `json:"providers"`
 	Tasks        map[string]int `json:"tasks"`
 }
 
@@ -69,7 +69,7 @@ type Project struct {
 	MeminiNamespace string            `json:"meminiNamespace"`
 	Model           string            `json:"model"`
 	Thinking        string            `json:"thinking"`
-	Providers       any               `json:"providers"`
+	Providers       Policy            `json:"providers"`
 	Secrets         map[string]string `json:"secrets"`
 	Tasks           map[string]int    `json:"tasks"`
 	Repos           []Repo            `json:"repos"`
@@ -166,12 +166,27 @@ func HostName() (string, error) {
 	return strings.ToLower(name), nil
 }
 
-// ProjectHost is the host a project runs on.
+// ProjectHost is the host a project runs on: its own, the default, or the hub.
 func (r *Registry) ProjectHost(name string) string {
 	if host := r.Projects[name].Host; host != "" {
 		return host
 	}
-	return r.Defaults.Host
+	if r.Defaults.Host != "" {
+		return r.Defaults.Host
+	}
+	return r.Platform.Hub
+}
+
+// Policy is a providers policy that remembers whether the registry set it, so an explicit null
+// is rejected instead of being mistaken for an absent policy.
+type Policy struct {
+	Set   bool
+	Value any
+}
+
+func (p *Policy) UnmarshalJSON(data []byte) error {
+	p.Set = true
+	return json.Unmarshal(data, &p.Value)
 }
 
 // Names lists projects on host in name order, or every project when host is empty.

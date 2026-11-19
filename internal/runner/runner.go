@@ -110,11 +110,12 @@ func Loop(h Host, name, task string) (int, error) {
 			"--session-id", session,
 			"--model", model + ":" + thinking,
 		}
-		matches, err := filepath.Glob(filepath.Join(sessionDir, "*_"+session+".jsonl"))
+		// Match file names inside the literal directory, so brackets in a path are not a pattern.
+		exists, err := sessionExists(sessionDir, session)
 		if err != nil {
 			return 0, err
 		}
-		if len(matches) == 0 {
+		if !exists {
 			if task != "" {
 				args = append(args, "Work on task "+task+". Read BRIEF.md and STATE.md. Follow tasks.md. "+
 					"Use branch task/"+task+" and .worktrees/<repo>/"+task+" only for repositories you need.")
@@ -277,7 +278,12 @@ func projectSecrets(h Host, name string, project registry.Project, values map[st
 			return fmt.Errorf("Unexpected secret key %s in %s", key, path)
 		}
 		var decoded string
-		if err := json.Unmarshal([]byte(strings.ReplaceAll(value, `\$`, "$")), &decoded); err != nil {
+		raw := strings.TrimSpace(strings.ReplaceAll(value, `\$`, "$"))
+		// Only a JSON string is a value. null would decode to an empty string.
+		if !strings.HasPrefix(raw, `"`) {
+			return fmt.Errorf("Invalid secret value for %s in %s", key, path)
+		}
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 			// The decoder's message can quote part of the value, so name only the key.
 			return fmt.Errorf("Invalid secret value for %s in %s", key, path)
 		}
@@ -296,13 +302,17 @@ func projectSecrets(h Host, name string, project registry.Project, values map[st
 // allow. It is a security boundary, so an unknown policy or provider is an error.
 func providerPolicy(h Host, name string, project registry.Project, values map[string]string) error {
 	host := h.Registry.Hosts[h.Name]
-	policies := []any{host.Providers, project.Providers}
-	if project.Providers == nil {
-		policies[1] = h.Registry.Defaults.Providers
+	// An absent policy means all, as in the Python runner. An explicit null is invalid.
+	projectPolicy := project.Providers
+	if !projectPolicy.Set {
+		projectPolicy = h.Registry.Defaults.Providers
 	}
-	for _, policy := range policies {
-		if policy == nil {
+	for _, set := range []registry.Policy{host.Providers, projectPolicy} {
+		policy := set.Value
+		if !set.Set {
 			policy = "all"
+		} else if policy == nil {
+			return errors.New("Invalid providers policy")
 		}
 		allowed := map[string]bool{}
 		switch value := policy.(type) {
@@ -525,4 +535,21 @@ func environmentList(values map[string]string) []string {
 		entries[i] = key + "=" + values[key]
 	}
 	return entries
+}
+
+// sessionExists reports whether Pi already has a session file named *_<session>.jsonl in dir.
+func sessionExists(dir, session string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), "_"+session+".jsonl") {
+			return true, nil
+		}
+	}
+	return false, nil
 }

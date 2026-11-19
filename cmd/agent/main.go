@@ -804,7 +804,7 @@ func list(home string, reg *registry.Registry, host, root string) error {
 		fmt.Printf("%s lifecycle=%s init=%s folder=%s rex=%s pi=%s generation=%d requests=%d%s "+
 			"host=%s providers=%s tasks=%d\n", name, lifecycle, init, yesNo(isDir), rexID,
 			yesNo(workspace.Running(folder)), generation, len(inbox), restart, host,
-			providerStatus(reg.Projects[name].Providers), tasks)
+			providerStatus(reg.Projects[name].Providers.Value), tasks)
 		if !isDir {
 			continue
 		}

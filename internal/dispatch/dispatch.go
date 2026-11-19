@@ -65,8 +65,8 @@ func Run(reg *registry.Registry, home, client string, args []string) error {
 		}
 		words := []string{program}
 		if command[0] == "ask" && sender == "" {
-			// Older laptop dispatchers send this flag; the remote command accepts it.
-			words = append(words, "--client-jan")
+			// The remote command also accepts the older --client-jan spelling.
+			words = append(words, "--client-operator")
 		}
 		words = append(words, "--launch")
 		words = append(words, command...)
