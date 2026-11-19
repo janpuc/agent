@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -23,10 +24,19 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var status exitStatus
+		if errors.As(err, &status) {
+			os.Exit(status.code)
+		}
 		fmt.Fprintf(os.Stderr, "agent: %v\n", err)
 		os.Exit(1)
 	}
 }
+
+// exitStatus carries a child's exit code that the command reports without a message.
+type exitStatus struct{ code int }
+
+func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 func run(args []string) error {
 	home, err := os.UserHomeDir()
@@ -34,6 +44,9 @@ func run(args []string) error {
 		return err
 	}
 	switch {
+	case len(args) == 1 && args[0] == "--main-endpoint":
+		// Before the registry read, so a broken registry can still be repaired by chezmoi update.
+		return mainEndpoint(home)
 	case len(args) > 0 && args[0] == "todo":
 		if len(args) != 1 {
 			return errors.New("usage: agent todo")
@@ -55,9 +68,14 @@ func run(args []string) error {
 		}
 		fmt.Println(ns)
 		return nil
-	case len(args) > 1 && (args[0] == "--client-operator" || args[0] == "--client-jan") && args[1] != "--launch":
-		// Laptop dispatch marks an operator request ahead of an ordinary command.
-		return legacy.Exec(home, append([]string{args[0], "--launch"}, args[1:]...))
+	case len(args) > 0 && (args[0] == "--client-operator" || args[0] == "--client-jan"):
+		return clientRequest(home, args)
+	case len(args) == 1 && (args[0] == "--remote-inbox" || args[0] == "--fetch-replies"):
+		return requestEntry(home, args, false, args)
+	case len(args) > 0 && (args[0] == "ask" || args[0] == "reply"):
+		return requestEntry(home, args, false, launchArgs(args))
+	case len(args) > 2 && args[0] == "--launch" && (args[1] == "ask" || args[1] == "reply"):
+		return requestEntry(home, args[1:], false, args)
 	case len(args) == 2 && args[0] == "--run":
 		return legacy.Exec(home, args[1:])
 	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
@@ -65,6 +83,138 @@ func run(args []string) error {
 		return legacy.Exec(home, args)
 	}
 	return legacy.Exec(home, append([]string{"--launch"}, args...))
+}
+
+// mainEndpoint is the coordinator's forced SSH command. It accepts exactly three operations and
+// runs before the registry is read, as authorized_keys is the gate, not the host name.
+func mainEndpoint(home string) error {
+	operation := os.Getenv("SSH_ORIGINAL_COMMAND")
+	switch operation {
+	case "agent ls", "agent restart all", "chezmoi update":
+	default:
+		return errors.New("main endpoint accepts only agent ls, agent restart all or chezmoi update")
+	}
+	if err := os.Chdir(home); err != nil {
+		return err
+	}
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		return err
+	}
+	defer devnull.Close()
+	os.Stdin = devnull
+	if operation == "agent ls" {
+		return overview(home, []string{"ls"})
+	}
+	if operation == "agent restart all" {
+		return legacy.Exec(home, []string{"--launch", "restart", "all"})
+	}
+	// No TTY: chezmoi scripts that need sudo fail and wait for the operator's local apply.
+	command := exec.Command("chezmoi", "--no-tty", "update")
+	command.Stdin = devnull
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exitStatus{exit.ExitCode()}
+		}
+		return err
+	}
+	return nil
+}
+
+// clientRequest accepts an operator ask from a laptop dispatcher and nothing else.
+func clientRequest(home string, args []string) error {
+	rest := args[1:]
+	if len(rest) > 0 && rest[0] == "--launch" {
+		rest = rest[1:]
+	}
+	if len(rest) == 0 || rest[0] != "ask" {
+		return errors.New("--client-operator is only for laptop requests")
+	}
+	return requestEntry(home, rest, true, launchArgs(args))
+}
+
+// launchArgs is the shape older commands hand the legacy runner: a launch flag added to a bare
+// command or to an operator flag that came without one.
+func launchArgs(args []string) []string {
+	if len(args) > 1 && (args[0] == "--client-operator" || args[0] == "--client-jan") && args[1] != "--launch" {
+		return append([]string{args[0], "--launch"}, args[1:]...)
+	}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return append([]string{"--launch"}, args...)
+	}
+	return args
+}
+
+// requestEntry runs the request commands. A dispatch-only client, or a host the registry does not
+// list, still hands the command to the legacy runner.
+func requestEntry(home string, args []string, clientOperator bool, fallback []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if reg.IsClient(host) {
+		return legacy.Exec(home, fallback)
+	}
+	if _, ok := reg.Hosts[host]; !ok {
+		return legacy.Exec(home, fallback)
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "--remote-inbox":
+		return requests.RemoteInbox(reg, home, host, root, os.Stdin)
+	case "--fetch-replies":
+		return requests.FetchReplies(reg, home, host, root)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	if args[0] == "ask" {
+		if len(args) < 3 {
+			return errors.New("Usage: agent ask <project> <text>")
+		}
+		return requests.Ask(reg, home, host, root, args[1], strings.Join(args[2:], " "), clientOperator)
+	}
+	if len(args) < 4 {
+		return errors.New("Usage: agent reply <project> <id> <text>")
+	}
+	project := args[1]
+	if _, ok := reg.Projects[project]; !ok || reg.ProjectHost(project) != host {
+		return errors.New("Replies must originate on this project's host")
+	}
+	return requests.Reply(reg, home, host, root, project, args[2], strings.Join(args[3:], " "))
+}
+
+// reservedNames are project names that would shadow a command.
+var reservedNames = map[string]bool{
+	"up": true, "ls": true, "archive": true, "adopt": true, "ask": true, "reply": true,
+	"restart": true, "task": true, "open": true, "help": true, "todo": true, "digest": true,
+}
+
+// validateProjects refuses project names that shadow a command and broken lifecycles before a
+// request command runs.
+func validateProjects(reg *registry.Registry, home, host string) error {
+	operator, err := reg.Operator()
+	if err != nil {
+		return err
+	}
+	for _, name := range reg.Names(host) {
+		if !registry.ValidName(name) || reservedNames[name] || name == operator {
+			return errors.New("Project names must be single path components and not reserved command names or the operator")
+		}
+		if _, err := reg.Lifecycle(home, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // local loads the registry and checks that this machine is one of its execution hosts.

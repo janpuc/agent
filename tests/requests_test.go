@@ -2,16 +2,100 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 const requestID = "20261119T075914-25fd7a"
 
+var requestIDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$`)
+
+// initialize builds a workspace and its initialization record directly, so a request test needs
+// no project command to set one up.
+func (f *fixture) initialize(name string) string {
+	f.t.Helper()
+	folder := f.workspace(name)
+	must(f.t, os.MkdirAll(filepath.Join(folder, ".agent/inbox"), 0o755))
+	f.write(filepath.Join(".local/state/agents/initialized", name), mustJSON(f.t, map[string]any{
+		"schemaVersion": 1, "project": name, "workspace": folder, "origin": "bootstrap",
+		"state": "initialized",
+	}))
+	return folder
+}
+
 func request(from, to string) map[string]any {
 	return map[string]any{"id": requestID, "from": from, "to": to, "status": "accepted", "text": "Help"}
+}
+
+func TestAskReplyAndInboxLimits(t *testing.T) {
+	f := newFixture(t, "hub")
+	garden := f.initialize("garden")
+	admin := f.initialize("admin")
+
+	out := f.ok(f.with("PI_PROJECT=admin").agent("ask", "garden", "Water", "the", "plants"))
+	asked := jsonFiles(t, filepath.Join(garden, ".agent/inbox"))
+	if len(asked) != 1 {
+		t.Fatalf("garden inbox %v", asked)
+	}
+	id, _ := asked[0]["id"].(string)
+	if !requestIDPattern.MatchString(id) || asked[0]["from"] != "admin" || asked[0]["to"] != "garden" ||
+		asked[0]["text"] != "Water the plants" || asked[0]["status"] != "new" || asked[0]["created"] == nil {
+		t.Fatalf("stored request %v", asked[0])
+	}
+	if !strings.Contains(out.stdout, "garden: request "+id) {
+		t.Fatalf("ask output\n%s", out)
+	}
+	log := f.path(".local/state/agents/actions.jsonl")
+	info, err := os.Stat(log)
+	must(t, err)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("action log mode %v", info.Mode())
+	}
+	var action map[string]any
+	must(t, json.Unmarshal([]byte(strings.TrimSpace(f.read(log))), &action))
+	if action["what"] != "a request" || action["project"] != "admin" ||
+		action["command"] != "agent ask garden: Water the plants" || action["host"] != "hub" {
+		t.Fatalf("action log line %v", action)
+	}
+
+	replyOut := f.ok(f.with("PI_PROJECT=garden").agent("reply", "garden", id, "Done"))
+	replies := jsonFiles(t, filepath.Join(admin, ".agent/inbox"))
+	if len(replies) != 1 {
+		t.Fatalf("admin inbox %v", replies)
+	}
+	replyID, _ := replies[0]["id"].(string)
+	if replies[0]["from"] != "garden" || replies[0]["to"] != "admin" || replies[0]["text"] != "Done" ||
+		replies[0]["inReplyTo"] != id || !requestIDPattern.MatchString(replyID) {
+		t.Fatalf("stored reply %v", replies[0])
+	}
+	if !strings.Contains(replyOut.stdout, "admin: reply "+replyID+" to request "+id) {
+		t.Fatalf("reply output\n%s", replyOut)
+	}
+
+	// The hub refuses a reply larger than the remote inbox may carry and stores nothing.
+	f.fails(f.with("PI_PROJECT=garden").agent("reply", "garden", id, strings.Repeat("x", 32768)),
+		"Reply exceeds inbox payload limit")
+	if len(jsonFiles(t, filepath.Join(admin, ".agent/inbox"))) != 1 {
+		t.Fatal("an oversized reply was stored")
+	}
+
+	// The remote inbox accepts at most 128 acknowledgements in one fetch.
+	queue := f.path(".local/state/agents/remote-inbox/field")
+	must(t, os.MkdirAll(queue, 0o755))
+	acknowledgements := []any{}
+	for i := 0; i < 129; i++ {
+		acknowledgements = append(acknowledgements, fmt.Sprintf("20261119T0759%02d-%06x", i%60, i))
+	}
+	fetch := f.with("SSH_ORIGINAL_COMMAND=fetch")
+	f.fails(fetch.input(mustJSON(t, map[string]any{"ack": acknowledgements})).internal("--remote-inbox"),
+		"acknowledgements")
+	if empty := f.ok(fetch.input(`{"ack": []}`).internal("--remote-inbox")); empty.stdout != "[]\n" {
+		t.Fatalf("empty fetch output\n%s", empty)
+	}
 }
 
 func TestRemoteInboxRejectsOtherOperations(t *testing.T) {

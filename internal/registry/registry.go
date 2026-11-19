@@ -102,6 +102,54 @@ func Load(home string) (*Registry, error) {
 	return &r, nil
 }
 
+// Operator is the reserved sender for requests from a laptop client.
+func (r *Registry) Operator() (string, error) {
+	if r.Platform.Operator == "" {
+		return "", fmt.Errorf("registry platform is missing operator")
+	}
+	return r.Platform.Operator, nil
+}
+
+// Coordinator receives the operator's replies.
+func (r *Registry) Coordinator() (string, error) {
+	if r.Platform.Coordinator == "" {
+		return "", fmt.Errorf("registry platform is missing coordinator")
+	}
+	return r.Platform.Coordinator, nil
+}
+
+// Hub receives remote deliveries and queues replies for the remote project.
+func (r *Registry) HubSite() (string, error) {
+	if r.Platform.Hub == "" {
+		return "", fmt.Errorf("registry platform is missing hub")
+	}
+	return r.Platform.Hub, nil
+}
+
+// RemoteSite is the project on another host that talks to the hub over SSH.
+func (r *Registry) RemoteSite() (Remote, error) {
+	remote := r.Platform.Remote
+	switch {
+	case remote.Project == "":
+		return Remote{}, fmt.Errorf("registry platform is missing remote.project")
+	case remote.Host == "":
+		return Remote{}, fmt.Errorf("registry platform is missing remote.host")
+	case remote.Identity == "":
+		return Remote{}, fmt.Errorf("registry platform is missing remote.identity")
+	}
+	return remote, nil
+}
+
+// IsClient reports whether host is a dispatch-only client.
+func (r *Registry) IsClient(host string) bool {
+	for _, client := range r.Platform.Clients {
+		if client == host {
+			return true
+		}
+	}
+	return false
+}
+
 // HostName is this machine's short lowercase name. AGENT_HOST overrides it for tests, which play
 // every host role on one machine.
 func HostName() (string, error) {
