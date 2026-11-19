@@ -50,6 +50,8 @@ type Host struct {
 	Guard         string `json:"guard"`
 	MaxAgents     *int   `json:"maxAgents"`
 	Providers     any    `json:"providers"`
+	// ScratchProject is the project that holds free-standing work on this host.
+	ScratchProject string `json:"scratchProject"`
 }
 
 type Defaults struct {
@@ -230,6 +232,15 @@ func (r *Registry) Namespace(name string) string {
 		prefix = r.Defaults.MeminiPrefix
 	}
 	return prefix + "/" + name
+}
+
+// ScratchProject is the project that holds this host's scratch work.
+func (r *Registry) ScratchProject(host string) (string, error) {
+	name := r.Hosts[host].ScratchProject
+	if name == "" {
+		return "", fmt.Errorf("%s: no scratch project configured", host)
+	}
+	return name, nil
 }
 
 // Scratch is the shared namespace for sessions outside registered projects on host.
