@@ -16,6 +16,7 @@ import (
 	"github.com/janpuc/agent/internal/digest"
 	"github.com/janpuc/agent/internal/legacy"
 	"github.com/janpuc/agent/internal/notes"
+	"github.com/janpuc/agent/internal/project"
 	"github.com/janpuc/agent/internal/registry"
 	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/rex"
@@ -78,6 +79,10 @@ func run(args []string) error {
 		return requestEntry(home, args[1:], false, args)
 	case len(args) == 2 && args[0] == "--run":
 		return legacy.Exec(home, args[1:])
+	case len(args) > 0 && args[0] == "--register":
+		return registerEntry(home, args)
+	case isProjectEntry(args):
+		return projectEntry(home, args)
 	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
 		// Entry points for SSH forced commands, Rex tabs and laptop dispatch.
 		return legacy.Exec(home, args)
@@ -107,7 +112,7 @@ func mainEndpoint(home string) error {
 		return overview(home, []string{"ls"})
 	}
 	if operation == "agent restart all" {
-		return legacy.Exec(home, []string{"--launch", "restart", "all"})
+		return projectEntry(home, []string{"restart", "all"})
 	}
 	// No TTY: chezmoi scripts that need sudo fail and wait for the operator's local apply.
 	command := exec.Command("chezmoi", "--no-tty", "update")
@@ -191,6 +196,147 @@ func requestEntry(home string, args []string, clientOperator bool, fallback []st
 		return errors.New("Replies must originate on this project's host")
 	}
 	return requests.Reply(reg, home, host, root, project, args[2], strings.Join(args[3:], " "))
+}
+
+// projectCommand strips one --launch prefix from the arguments of a workspace command. The
+// laptop dispatcher sends the prefixed form, a person at the host types the bare one.
+func projectCommand(args []string) ([]string, bool) {
+	if len(args) > 0 && args[0] == "--launch" {
+		return args[1:], true
+	}
+	return args, false
+}
+
+// isProjectEntry reports whether args name a project lifecycle command: a project, open, up,
+// adopt, archive or restart. Help and task commands stay with the legacy runner.
+func isProjectEntry(args []string) bool {
+	command, _ := projectCommand(args)
+	if len(command) == 0 {
+		return false
+	}
+	switch command[0] {
+	case "up", "adopt", "archive", "restart":
+		return true
+	case "open":
+		return len(command) == 2
+	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace":
+		return false
+	}
+	return !strings.HasPrefix(command[0], "-")
+}
+
+// projectEntry runs the workspace lifecycle commands on this host. A dispatch-only client still
+// hands them to the legacy runner's SSH fan-out.
+func projectEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if reg.IsClient(host) {
+		return legacy.Exec(home, launchArgs(args))
+	}
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	command, _ := projectCommand(args)
+	if len(command) > 1 && command[0] == "open" {
+		command = command[1:]
+	}
+	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
+	if command[0] == "adopt" || command[0] == "archive" {
+		if len(command) != 2 || !onHost(reg, host, command[1]) {
+			return fmt.Errorf("Usage: agent %s <registered-project>", command[0])
+		}
+		if command[0] == "archive" {
+			return hostWork.Archive(command[1])
+		}
+		return hostWork.Adopt(command[1])
+	}
+	if command[0] == "restart" {
+		if len(command) != 2 {
+			return errors.New("Usage: agent restart <project>|all")
+		}
+		return hostWork.Restart(command[1])
+	}
+	if len(command) != 1 {
+		return errors.New("Usage: agent <project>|up|ls|archive <project>|adopt <project>|restart <project>|all")
+	}
+	names := []string{command[0]}
+	if command[0] == "up" {
+		names = nil
+		for _, name := range reg.Names(host) {
+			lifecycle, err := reg.Lifecycle(home, name)
+			if err != nil {
+				return err
+			}
+			if lifecycle == "active" {
+				names = append(names, name)
+			}
+		}
+	}
+	for _, name := range names {
+		if !onHost(reg, host, name) {
+			return fmt.Errorf("Unknown project: %s", name)
+		}
+		if err := hostWork.Ensure(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// registerEntry adds a member to an initialized workspace for the operator.
+func registerEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if reg.IsClient(host) {
+		return legacy.Exec(home, args)
+	}
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	if len(args) != 3 && len(args) != 4 {
+		return errors.New("Usage: agent-run <registered-project>")
+	}
+	if !onHost(reg, host, args[1]) {
+		return fmt.Errorf("Unknown project: %s", args[1])
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	url := ""
+	if len(args) == 4 {
+		url = args[3]
+	}
+	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
+	return hostWork.Register(args[1], args[2], url)
+}
+
+// onHost reports whether name is a project this execution host runs.
+func onHost(reg *registry.Registry, host, name string) bool {
+	_, ok := reg.Projects[name]
+	return ok && reg.ProjectHost(name) == host
 }
 
 // reservedNames are project names that would shadow a command.
