@@ -62,7 +62,7 @@ func (h Host) Tasks(defaults map[string]int, args []string) error {
 		if len(rest) != passed {
 			return errors.New("Usage: agent task ticket|close|restart [project] <id> [TICKET]")
 		}
-		return h.taskAction(name, action, rest)
+		return h.taskAction(name, action, rest, "")
 	}
 	return errors.New("Usage: agent task ticket|close|restart [project] <id> [TICKET]")
 }
@@ -189,8 +189,9 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 	return nil
 }
 
-// taskAction runs ticket, close, restart and finalize under the project lock.
-func (h Host) taskAction(name, action string, rest []string) error {
+// taskAction runs ticket, close, restart and finalize under the project lock. A non-empty foldTo
+// sends the close's fold to that project instead of the task's own one.
+func (h Host) taskAction(name, action string, rest []string, foldTo string) error {
 	task := rest[0]
 	folder := filepath.Join(h.Root, name)
 	if action == "close" || action == "restart" {
@@ -245,6 +246,12 @@ func (h Host) taskAction(name, action string, rest []string) error {
 			return err
 		}
 	case action == "close":
+		if foldTo != "" {
+			if meta.FoldTo != "" && meta.FoldTo != foldTo {
+				return fmt.Errorf("%s: foldTo is already %s", task, meta.FoldTo)
+			}
+			meta.FoldTo = foldTo
+		}
 		meta.Status = "closing"
 		if meta.FoldRequest == "" {
 			if meta.FoldRequest, err = requests.NewID(); err != nil {
@@ -378,15 +385,24 @@ func (h Host) finalizeTask(name, task string) error {
 			return errors.New("RESULT.md needs Outcome, Changes, Verification, Learned and Open headings")
 		}
 	}
-	inbox := filepath.Join(folder, ".agent", "inbox")
+	foldTo := name
+	foldText := "Fold task " + task + " from " + result + " into notes/PROJECT.md and notes/STATE.md. " +
+		"Reconcile learned facts and open threads. Do not assume pending approvals were granted."
+	if meta.FoldTo != "" {
+		// A scratch task's fold goes to the project that takes its content in, not to the
+		// scratch project it was born in.
+		foldTo = meta.FoldTo
+		foldText = "Take scratch task " + task + " from " + result + ": copy what belongs into your " +
+			"workspace, fold RESULT.md into notes/PROJECT.md and notes/STATE.md, and leave the " +
+			"scratch folder in place. Do not assume pending approvals were granted."
+	}
+	inbox := filepath.Join(h.Root, foldTo, ".agent", "inbox")
 	if !workspace.Exists(filepath.Join(inbox, meta.FoldRequest+".json")) {
 		item := foldRequest{
-			ID: meta.FoldRequest, From: name, To: name, Kind: "fold", Task: task,
-			Text: "Fold task " + task + " from " + result + " into notes/PROJECT.md and notes/STATE.md. " +
-				"Reconcile learned facts and open threads. Do not assume pending approvals were granted.",
-			Created: requests.Timestamp(), Status: "new",
+			ID: meta.FoldRequest, From: name, To: foldTo, Kind: "fold", Task: task,
+			Text: foldText, Created: requests.Timestamp(), Status: "new",
 		}
-		if err := requests.Store(h.Registry, h.Home, h.Name, h.Root, name, item.ID, item); err != nil {
+		if err := requests.Store(h.Registry, h.Home, h.Name, h.Root, foldTo, item.ID, item); err != nil {
 			return err
 		}
 	}
