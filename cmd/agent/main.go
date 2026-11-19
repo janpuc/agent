@@ -84,6 +84,8 @@ func run(args []string) error {
 		return registerEntry(home, args)
 	case isTaskEntry(args):
 		return taskEntry(home, args)
+	case isScratchEntry(args):
+		return scratchEntry(home, args)
 	case isProjectEntry(args):
 		return projectEntry(home, args)
 	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
@@ -281,6 +283,73 @@ func taskEntry(home string, args []string) error {
 	return hostWork.Tasks(reg.Defaults.Tasks, command[1:])
 }
 
+// isScratchEntry reports whether args name a scratch command.
+func isScratchEntry(args []string) bool {
+	command, _ := projectCommand(args)
+	return len(command) > 0 && command[0] == "scratch"
+}
+
+// scratchEntry runs the scratch commands on this host against the host's scratch project. A
+// dispatch-only client sends them to the hub in the forms the legacy runner already knows.
+func scratchEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	command, _ := projectCommand(args)
+	if reg.IsClient(host) {
+		if len(command) > 1 && (command[1] == "fold" || command[1] == "promote") {
+			return errors.New("run agent scratch fold|promote on the host")
+		}
+		hub, err := reg.HubSite()
+		if err != nil {
+			return err
+		}
+		scratch, err := reg.ScratchProject(hub)
+		if err != nil {
+			return err
+		}
+		return legacy.Exec(home, clientScratchArgs(scratch, command))
+	}
+	hostPath(home)
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	scratch, err := reg.ScratchProject(host)
+	if err != nil {
+		return err
+	}
+	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
+	return hostWork.Scratch(scratch, reg.Defaults.Tasks, command[1:])
+}
+
+// clientScratchArgs translates a scratch command into the legacy --launch form that dispatches it
+// to the scratch project on the hub.
+func clientScratchArgs(scratch string, command []string) []string {
+	switch {
+	case len(command) == 1:
+		return []string{"--launch", "open", scratch}
+	case command[1] == "ls":
+		return []string{"--launch", "task", "ls", scratch}
+	case command[1] == "new":
+		return append([]string{"--launch", "task", "new", scratch}, command[2:]...)
+	case command[1] == "restart" && len(command) == 3:
+		return []string{"--launch", "task", "restart", scratch, command[2]}
+	}
+	return append([]string{"--launch"}, command...)
+}
+
 // projectEntry runs the workspace lifecycle commands on this host. A dispatch-only client still
 // hands them to the legacy runner's SSH fan-out.
 func projectEntry(home string, args []string) error {
@@ -401,6 +470,7 @@ func onHost(reg *registry.Registry, host, name string) bool {
 var reservedNames = map[string]bool{
 	"up": true, "ls": true, "archive": true, "adopt": true, "ask": true, "reply": true,
 	"restart": true, "task": true, "open": true, "help": true, "todo": true, "digest": true,
+	"scratch": true,
 }
 
 // validateProjects refuses project names that shadow a command and broken lifecycles before a
