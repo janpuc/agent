@@ -82,6 +82,8 @@ func run(args []string) error {
 		return legacy.Exec(home, args[1:])
 	case len(args) > 0 && args[0] == "--register":
 		return registerEntry(home, args)
+	case isTaskEntry(args):
+		return taskEntry(home, args)
 	case isProjectEntry(args):
 		return projectEntry(home, args)
 	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
@@ -222,7 +224,7 @@ func projectCommand(args []string) ([]string, bool) {
 }
 
 // isProjectEntry reports whether args name a project lifecycle command: a project, open, up,
-// adopt, archive or restart. Help and task commands stay with the legacy runner.
+// adopt, archive or restart. Help and task commands are handled elsewhere.
 func isProjectEntry(args []string) bool {
 	command, _ := projectCommand(args)
 	if len(command) == 0 {
@@ -237,6 +239,46 @@ func isProjectEntry(args []string) bool {
 		return false
 	}
 	return !strings.HasPrefix(command[0], "-")
+}
+
+// isTaskEntry reports whether args name a task subcommand. A bare task and its help stay with the
+// legacy runner, which prints the command guide.
+func isTaskEntry(args []string) bool {
+	command, _ := projectCommand(args)
+	if len(command) < 2 || command[0] != "task" {
+		return false
+	}
+	return command[1] != "-h" && command[1] != "--help"
+}
+
+// taskEntry runs the task commands on this host. A dispatch-only client still hands them to the
+// legacy runner's SSH fan-out.
+func taskEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if reg.IsClient(host) {
+		return legacy.Exec(home, launchArgs(args))
+	}
+	hostPath(home)
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	command, _ := projectCommand(args)
+	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
+	return hostWork.Tasks(reg.Defaults.Tasks, command[1:])
 }
 
 // projectEntry runs the workspace lifecycle commands on this host. A dispatch-only client still
