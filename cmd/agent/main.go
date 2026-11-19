@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,7 @@ func run(args []string) error {
 // mainEndpoint is the coordinator's forced SSH command. It accepts exactly three operations and
 // runs before the registry is read, as authorized_keys is the gate, not the host name.
 func mainEndpoint(home string) error {
+	hostPath(home)
 	operation := os.Getenv("SSH_ORIGINAL_COMMAND")
 	switch operation {
 	case "agent ls", "agent restart all", "chezmoi update":
@@ -126,6 +128,18 @@ func mainEndpoint(home string) error {
 		return err
 	}
 	return nil
+}
+
+// hostPath puts mise shims, Homebrew and the Rex server helpers first on a macOS execution host,
+// where SSH and launchd sessions start without them. Clients are never passed here.
+func hostPath(home string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	os.Setenv("PATH", strings.Join([]string{
+		filepath.Join(home, ".local/share/mise/shims"), "/opt/homebrew/bin",
+		"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS",
+		os.Getenv("PATH")}, string(os.PathListSeparator)))
 }
 
 // clientRequest accepts an operator ask from a laptop dispatcher and nothing else.
@@ -239,6 +253,7 @@ func projectEntry(home string, args []string) error {
 	if reg.IsClient(host) {
 		return legacy.Exec(home, launchArgs(args))
 	}
+	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
 		return fmt.Errorf("Host %s is not registered as an execution host", host)
 	}
@@ -309,6 +324,7 @@ func registerEntry(home string, args []string) error {
 	if reg.IsClient(host) {
 		return legacy.Exec(home, args)
 	}
+	hostPath(home)
 	if _, ok := reg.Hosts[host]; !ok {
 		return fmt.Errorf("Host %s is not registered as an execution host", host)
 	}
