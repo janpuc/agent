@@ -143,7 +143,7 @@ func write(reg *registry.Registry, home, host, root, target, id string, item any
 	if err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(folder, id+".json"), data)
+	return atomicWrite(filepath.Join(folder, id+".json"), append(data, '\n'))
 }
 
 // atomicWrite writes a temporary file beside path and renames it over path.
