@@ -21,6 +21,9 @@ command line, files and external tools of an implementation. The Go implementati
   A remote host reaches the hub through a restricted SSH forced command.
 - Tasks: `agent task new` opens a task folder and a tab next to the project. Closing never
   deletes data.
+- Scratch: `agent scratch` keeps free-standing work as tasks of the project each host names in
+  `scratchProject`. A scratch task folds into a project or asks the coordinator to register a new
+  one, and its folder stays where it is.
 
 ## Registry
 
@@ -35,13 +38,14 @@ command line, files and external tools of an implementation. The Go implementati
     "remote": {"project": "field", "host": "outpost", "identity": "~/.ssh/field-inbox"}
   },
   "hosts": {
-    "hub": {"root": "~/Projects", "meminiPrefix": "lab", "guard": "personal"},
+    "hub": {"root": "~/Projects", "meminiPrefix": "lab", "guard": "personal", "scratchProject": "workshop"},
     "outpost": {"root": "~/Field", "meminiPrefix": "field", "guard": "work", "maxAgents": 5}
   },
   "defaults": {"host": "hub", "model": "provider/model", "thinking": "high", "tasks": {"maxOpen": 4}},
   "projects": {
     "admin": {},
     "garden": {"repos": [{"name": "code", "url": "https://example.com/code.git"}]},
+    "workshop": {},
     "field": {"host": "outpost"}
   }
 }
