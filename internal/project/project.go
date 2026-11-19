@@ -6,6 +6,7 @@ package project
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -156,7 +157,16 @@ func (h Host) Ensure(name string) error {
 // runnerCommand is the launch every pi tab uses.
 func runnerCommand(home, name string) []string {
 	script := "exec " + shellQuote(filepath.Join(home, ".local/bin/agent")) + " --run " + shellQuote(name)
-	return []string{"--shell=none", "--keep-open", "--", "fish", "-lc", script}
+	return []string{"--shell=none", "--keep-open", "--", fishPath(), "-lc", script}
+}
+
+// fishPath is fish by absolute path. The Rex server resolves a tab command with its own PATH,
+// which on macOS lacks the Homebrew prefix where fish lives.
+func fishPath() string {
+	if path, err := exec.LookPath("fish"); err == nil && filepath.IsAbs(path) {
+		return path
+	}
+	return "fish"
 }
 
 // shellQuote quotes one word as shlex.quote does for a login shell.

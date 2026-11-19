@@ -356,7 +356,7 @@ func taskRunnerCommand(home, name, task string) []string {
 	for i, word := range words {
 		words[i] = shellQuote(word)
 	}
-	return []string{"--shell=none", "--keep-open", "--", "fish", "-lc", "exec " + strings.Join(words, " ")}
+	return []string{"--shell=none", "--keep-open", "--", fishPath(), "-lc", "exec " + strings.Join(words, " ")}
 }
 
 // finalizeTask commits a requested close. It is idempotent, writes the fold request once and
