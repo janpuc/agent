@@ -48,6 +48,7 @@ Tasks
   task new [project] --wait <TICKET|--slug slug>  Open, paste brief  agent task new home --wait HA-124
   <TICKET>              Show its task, or open it with --wait       agent HA-125
   task ls [project]     List tasks and status                    agent task ls
+  task send [project] <id> <message>  Message a task session  agent task send home audit "Check the bridge too"
   task ticket [project] <slug> <TICKET>  Attach a ticket            agent task ticket home audit HA-123
   task close [project] <id>    Request a result and knowledge fold agent task close home audit
   task restart [project] <id>  Resume the same task session        agent task restart home audit

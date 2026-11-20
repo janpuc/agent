@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/rex"
@@ -32,7 +33,7 @@ type foldRequest struct {
 // falls back to PI_PROJECT, as inside a project session.
 func (h Host) Tasks(defaults map[string]int, args []string) error {
 	if len(args) == 0 {
-		return errors.New("Usage: agent task new|ls|ticket|close|restart [project] ...")
+		return errors.New("Usage: agent task new|ls|send|ticket|close|restart [project] ...")
 	}
 	action, rest := args[0], args[1:]
 	if action == "ls" && len(rest) == 0 {
@@ -54,6 +55,11 @@ func (h Host) Tasks(defaults map[string]int, args []string) error {
 	switch action {
 	case "new":
 		return h.newTask(name, rest, defaults)
+	case "send":
+		if len(rest) < 2 {
+			return errors.New("Usage: agent task send [project] <id> <message>")
+		}
+		return h.sendTask(defaults, name, rest[0], strings.Join(rest[1:], " "))
 	case "ticket", "close", "restart", "finalize":
 		passed := 1
 		if action == "ticket" {
@@ -109,6 +115,37 @@ func (h Host) Ticket(defaults map[string]int, id string) error {
 		return fmt.Errorf("%s: no project here takes tickets, use agent task new <project> --wait %s", id, id)
 	}
 	return h.Tasks(defaults, []string{"new", name, "--wait", id})
+}
+
+// sendTask queues a message for a task session. Its extension delivers it at the next idle point
+// as a user message, so nothing is typed into the tab. A stopped task is started to receive it.
+func (h Host) sendTask(defaults map[string]int, name, task, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("A message cannot be empty")
+	}
+	folder := filepath.Join(h.Root, name)
+	meta, err := workspace.ReadTask(folder, task)
+	if err != nil {
+		return err
+	}
+	if meta.Status == "closed" {
+		return fmt.Errorf("%s: task %s is closed, open a new task instead", name, task)
+	}
+	inbox := filepath.Join(workspace.TaskState(folder, task), "messages")
+	if err := os.MkdirAll(inbox, 0o700); err != nil {
+		return err
+	}
+	file := filepath.Join(inbox, time.Now().UTC().Format("20060102T150405.000000000Z")+".md")
+	if err := workspace.AtomicWrite(file, []byte(strings.TrimSpace(text)+"\n")); err != nil {
+		return err
+	}
+	if !workspace.RunningTask(folder, task) {
+		if err := h.Tasks(defaults, []string{"restart", name, task}); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("%s: message queued for task %s, delivered when it is idle\n", name, task)
+	return nil
 }
 
 // owns reports whether name is a project this execution host runs.
