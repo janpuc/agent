@@ -46,6 +46,7 @@ Overview
 Tasks
   task new [project] <TICKET|--slug slug> <brief>  Open a task      agent task new home --slug audit "Audit speakers"
   task new [project] --wait <TICKET|--slug slug>  Open, paste brief  agent task new home --wait HA-124
+  <TICKET>              Show its task, or open it with --wait       agent HA-125
   task ls [project]     List tasks and status                    agent task ls
   task ticket [project] <slug> <TICKET>  Attach a ticket            agent task ticket home audit HA-123
   task close [project] <id>    Request a result and knowledge fold agent task close home audit
@@ -173,6 +174,9 @@ func run(args []string) error {
 			return todo(home)
 		case "ls", "digest":
 			return overview(home, command)
+		}
+		if len(command) == 1 && workspace.ValidTicket(command[0]) {
+			return ticketEntry(home, command[0])
 		}
 		if isProjectEntry(command) {
 			return projectEntry(home, command)
@@ -363,6 +367,28 @@ func taskEntry(home string, args []string) error {
 	command, _ := projectCommand(args)
 	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
 	return hostWork.Tasks(reg.Defaults.Tasks, command[1:])
+}
+
+// ticketEntry brings up or opens the task for a bare ticket id on this host.
+func ticketEntry(home, id string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	hostPath(home)
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	hostWork := project.Host{Registry: reg, Home: home, Name: host, Root: root}
+	return hostWork.Ticket(reg.Defaults.Tasks, id)
 }
 
 // isScratchEntry reports whether args name a scratch command.

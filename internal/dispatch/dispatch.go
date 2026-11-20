@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/janpuc/agent/internal/registry"
+	"github.com/janpuc/agent/internal/workspace"
 )
 
 // program is the agent command the remote login shell runs. Every host runs the Go command.
@@ -47,13 +48,24 @@ func Run(reg *registry.Registry, home, client string, args []string) error {
 			command = append(command[:2], append([]string{sender}, command[2:]...)...)
 		}
 	}
-	targets, err := targets(reg, command)
-	if err != nil {
+	var hosts []string
+	var err error
+	if len(command) == 1 && workspace.ValidTicket(command[0]) {
+		// A bare ticket runs where the sender project lives, else where tickets open.
+		name := sender
+		if name == "" {
+			name = reg.Platform.Tickets
+		}
+		if !registered(reg, name) {
+			return errors.New("No project takes tickets, use agent task new <project> --wait " + command[0])
+		}
+		hosts = []string{projectHost(reg, name)}
+	} else if hosts, err = targets(reg, command); err != nil {
 		return err
 	}
 	printOutput := command[0] == "digest" ||
 		equal(command, "ls") || equal(command, "task", "ls") || equal(command, "todo")
-	for _, host := range targets {
+	for _, host := range hosts {
 		if _, ok := reg.Hosts[host]; !ok || !registry.ValidName(host) {
 			return fmt.Errorf("Unknown host: %s", host)
 		}

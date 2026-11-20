@@ -67,6 +67,50 @@ func (h Host) Tasks(defaults map[string]int, args []string) error {
 	return errors.New("Usage: agent task ticket|close|restart [project] <id> [TICKET]")
 }
 
+// Ticket brings up the task with this ticket id, or opens it with --wait when no project on
+// this host has it. A new task goes to the current project, else the registry's tickets project.
+func (h Host) Ticket(defaults map[string]int, id string) error {
+	var found []string
+	for _, name := range h.Registry.Names(h.Name) {
+		if workspace.Exists(workspace.TaskState(filepath.Join(h.Root, name), id)) {
+			found = append(found, name)
+		}
+	}
+	if len(found) > 1 {
+		return fmt.Errorf("%s: task in several projects (%s), use agent task restart <project> %s",
+			id, strings.Join(found, ", "), id)
+	}
+	if len(found) == 1 {
+		name := found[0]
+		folder := filepath.Join(h.Root, name)
+		meta, err := workspace.ReadTask(folder, id)
+		if err != nil {
+			return err
+		}
+		if meta.Status == "closed" {
+			return fmt.Errorf("%s: task %s is closed, its result is in tasks/%s/RESULT.md", name, id, id)
+		}
+		if !workspace.RunningTask(folder, id) {
+			if err := h.Tasks(defaults, []string{"restart", name, id}); err != nil {
+				return err
+			}
+		}
+		if err := h.selectTask(name, id); err != nil {
+			return err
+		}
+		fmt.Printf("%s: task %s shown\n", name, id)
+		return nil
+	}
+	name := os.Getenv("PI_PROJECT")
+	if !h.owns(name) {
+		name = h.Registry.Platform.Tickets
+	}
+	if !h.owns(name) {
+		return fmt.Errorf("%s: no project here takes tickets, use agent task new <project> --wait %s", id, id)
+	}
+	return h.Tasks(defaults, []string{"new", name, "--wait", id})
+}
+
 // owns reports whether name is a project this execution host runs.
 func (h Host) owns(name string) bool {
 	_, ok := h.Registry.Projects[name]

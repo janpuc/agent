@@ -32,6 +32,8 @@ type Platform struct {
 	// Hub receives remote deliveries and queues replies for the remote project.
 	Hub    string `json:"hub"`
 	Remote Remote `json:"remote"`
+	// Tickets is the project that opens a task for a bare ticket id outside any project.
+	Tickets string `json:"tickets"`
 }
 
 // Remote is the one project on another host that talks to the hub over SSH.
