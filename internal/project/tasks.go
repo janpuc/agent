@@ -191,12 +191,18 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 	var task, brief, ticket string
 	// --wait opens the tab without the first prompt, so the operator can paste the brief there.
 	wait := false
+	// --model provider/id[:thinking] runs this task on another model than its project.
+	model := ""
 	var words []string
-	for _, word := range rest {
-		if word == "--wait" {
+	for i := 0; i < len(rest); i++ {
+		switch {
+		case rest[i] == "--wait":
 			wait = true
-		} else {
-			words = append(words, word)
+		case rest[i] == "--model" && i+1 < len(rest) && strings.Contains(rest[i+1], "/"):
+			model = rest[i+1]
+			i++
+		default:
+			words = append(words, rest[i])
 		}
 	}
 	rest = words
@@ -210,7 +216,7 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 		task, brief = rest[0], rest[1]
 		ticket = task
 	default:
-		return errors.New("Usage: agent task new [project] [--wait] <TICKET-ID|--slug slug> <brief>")
+		return errors.New("Usage: agent task new [project] [--wait] [--model provider/id[:thinking]] <TICKET-ID|--slug slug> <brief>")
 	}
 	if strings.TrimSpace(brief) == "" {
 		if !wait {
@@ -282,6 +288,11 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 	}
 	if wait {
 		if err := os.WriteFile(filepath.Join(state, waitMarker), []byte(meta.Opened+"\n"), 0o644); err != nil {
+			return err
+		}
+	}
+	if model != "" {
+		if err := os.WriteFile(filepath.Join(state, ModelFile), []byte(model+"\n"), 0o644); err != nil {
 			return err
 		}
 	}
@@ -455,6 +466,9 @@ func (h Host) startTask(name, task string) error {
 	}
 	return rex.CloseBlock(session.ID, blocks[0].ID)
 }
+
+// ModelFile in a task's state folder names the model a task runs on instead of its project's.
+const ModelFile = "model"
 
 // waitMarker in a task's state folder tells the runner to start Pi without the first prompt.
 const waitMarker = "wait-for-brief"

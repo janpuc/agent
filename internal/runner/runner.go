@@ -105,6 +105,16 @@ func Loop(h Host, name, task string) (int, error) {
 			"--"+cwdEscape.ReplaceAllString(strings.TrimLeft(cwd, `/\`), "-")+"--")
 		handoff := filepath.Join(state, "handoff-"+strconv.Itoa(generation)+".md")
 		model, thinking := projectModel(h, name)
+		if task != "" {
+			if text, err := os.ReadFile(filepath.Join(state, "model")); err == nil {
+				if chosen := strings.TrimSpace(string(text)); chosen != "" {
+					model = chosen
+					if base, level, ok := strings.Cut(chosen, ":"); ok {
+						model, thinking = base, level
+					}
+				}
+			}
+		}
 		args := []string{
 			filepath.Join(h.Home, ".pi/agent/local/bin/pi"),
 			"--session-id", session,
