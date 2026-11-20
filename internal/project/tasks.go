@@ -108,6 +108,20 @@ func (h Host) listProjectTasks(name string) error {
 // newTask opens a task, starts its runner and never reuses an identity.
 func (h Host) newTask(name string, rest []string, defaults map[string]int) error {
 	var task, brief, ticket string
+	// --wait opens the tab without the first prompt, so the operator can paste the brief there.
+	wait := false
+	var words []string
+	for _, word := range rest {
+		if word == "--wait" {
+			wait = true
+		} else {
+			words = append(words, word)
+		}
+	}
+	rest = words
+	if wait && (len(rest) == 1 || len(rest) == 2 && rest[0] == "--slug") {
+		rest = append(rest, "")
+	}
 	switch {
 	case len(rest) == 3 && rest[0] == "--slug" && workspace.ValidSlug(rest[1]):
 		task, brief = rest[1], rest[2]
@@ -115,10 +129,13 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 		task, brief = rest[0], rest[1]
 		ticket = task
 	default:
-		return errors.New("Usage: agent task new [project] <TICKET-ID|--slug slug> <brief>")
+		return errors.New("Usage: agent task new [project] [--wait] <TICKET-ID|--slug slug> <brief>")
 	}
 	if strings.TrimSpace(brief) == "" {
-		return errors.New("A task needs a brief")
+		if !wait {
+			return errors.New("A task needs a brief, or --wait to paste it in the tab")
+		}
+		brief = pendingBrief
 	}
 	if err := h.Ensure(name); err != nil {
 		return err
@@ -182,7 +199,15 @@ func (h Host) newTask(name string, rest []string, defaults map[string]int) error
 	if err := workspace.UpdateBrief(folder, meta); err != nil {
 		return err
 	}
+	if wait {
+		if err := os.WriteFile(filepath.Join(state, waitMarker), []byte(meta.Opened+"\n"), 0o644); err != nil {
+			return err
+		}
+	}
 	if err := h.startTask(name, task); err != nil {
+		return err
+	}
+	if err := h.selectTask(name, task); err != nil {
 		return err
 	}
 	fmt.Printf("%s: task %s opened\n", name, task)
@@ -348,6 +373,34 @@ func (h Host) startTask(name, task string) error {
 		return err
 	}
 	return rex.CloseBlock(session.ID, blocks[0].ID)
+}
+
+// waitMarker in a task's state folder tells the runner to start Pi without the first prompt.
+const waitMarker = "wait-for-brief"
+
+// pendingBrief stands in BRIEF.md until the operator pastes the real brief into the task tab.
+const pendingBrief = "Brief pending. The operator pastes it as the first message in this tab. Save that message " +
+	"here in BRIEF.md in place of this paragraph, then work on the task per tasks.md."
+
+// selectTask shows a task's tab in the connected Rex apps.
+func (h Host) selectTask(name, task string) error {
+	sessions, err := rex.Sessions()
+	if err != nil {
+		return err
+	}
+	session, err := rex.Unique(sessions, name)
+	if err != nil || session == nil {
+		return err
+	}
+	windows, err := rex.Inspect(session.ID)
+	if err != nil {
+		return err
+	}
+	window, err := rex.UniqueWindow(windows, "task:"+task)
+	if err != nil || window == nil {
+		return err
+	}
+	return h.selectSession(name, session.ID, window.ID)
 }
 
 // taskRunnerCommand is the launch a task tab uses.

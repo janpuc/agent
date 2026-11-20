@@ -116,7 +116,9 @@ func Loop(h Host, name, task string) (int, error) {
 			return 0, err
 		}
 		if !exists {
-			if task != "" {
+			if task != "" && workspace.Exists(filepath.Join(state, "wait-for-brief")) {
+				// Opened with --wait: the operator pastes the brief as the first message.
+			} else if task != "" {
 				args = append(args, "Work on task "+task+". Read BRIEF.md and STATE.md. Follow tasks.md. "+
 					"Use branch task/"+task+" and .worktrees/<repo>/"+task+" only for repositories you need.")
 			} else if workspace.Exists(handoff) {

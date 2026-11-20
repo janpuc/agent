@@ -45,6 +45,7 @@ Overview
 
 Tasks
   task new [project] <TICKET|--slug slug> <brief>  Open a task      agent task new home --slug audit "Audit speakers"
+  task new [project] --wait <TICKET|--slug slug>  Open, paste brief  agent task new home --wait HA-124
   task ls [project]     List tasks and status                    agent task ls
   task ticket [project] <slug> <TICKET>  Attach a ticket            agent task ticket home audit HA-123
   task close [project] <id>    Request a result and knowledge fold agent task close home audit

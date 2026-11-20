@@ -248,25 +248,23 @@ func (h Host) orderSessions() error {
 	return nil
 }
 
-// selectSession focuses the new tab when exactly one Rex app is connected.
+// selectSession shows the tab in every connected Rex app. Rex cannot say which app the operator is
+// looking at, so none is skipped.
 func (h Host) selectSession(name, session, window string) error {
 	clients, err := rex.Clients()
 	if err != nil {
 		return err
 	}
-	var connected []rex.Client
+	var failed error
 	for _, client := range clients {
-		if client.Info.Kind == "app" && client.State == "connected" {
-			connected = append(connected, client)
+		if client.Info.Kind != "app" || client.State != "connected" {
+			continue
+		}
+		if err := rex.Select(client.ID, session, window); err != nil && failed == nil {
+			failed = fmt.Errorf("%s: showing the tab in Rex app %s: %w", name, client.ID, err)
 		}
 	}
-	switch {
-	case len(connected) == 1:
-		return rex.Select(connected[0].ID, session, window)
-	case len(connected) > 1:
-		fmt.Fprintf(os.Stderr, "%s: several Rex apps connected, not choosing one\n", name)
-	}
-	return nil
+	return failed
 }
 
 // requireCapacity refuses a new runner when this host already runs maxAgents of them.
