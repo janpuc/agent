@@ -37,3 +37,35 @@ func TestTaskSendQueuesAMessageForTheSession(t *testing.T) {
 	f.write(metaPath, mustJSON(t, meta))
 	f.fails(f.agent("task", "send", "garden", "audit", "Late"), "closed")
 }
+
+// A steering message waits in its own folder, so the extension can hand it to a busy turn.
+func TestTaskSendSteerQueuesForTheBusyTurn(t *testing.T) {
+	if implementation.kind == "python" {
+		t.Skip("Go runner only")
+	}
+	f := newFixture(t, "hub")
+	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
+	f.ok(f.agent("task", "send", "--steer", "garden", "audit", "Stop,", "wrong file"))
+	f.ok(f.agent("task", "send", "garden", "audit", "--steer", "Again"))
+	steer := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages/steer")
+	entries, err := os.ReadDir(steer)
+	must(t, err)
+	if len(entries) != 2 {
+		t.Fatalf("steer messages %v", entries)
+	}
+	if text := f.read(filepath.Join(steer, entries[0].Name())); text != "Stop, wrong file\n" {
+		t.Fatalf("message %q", text)
+	}
+	f.ok(f.agent("task", "send", "garden", "audit", "Keep", "--steer", "literal"))
+	plain, err := os.ReadDir(filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages"))
+	must(t, err)
+	found := false
+	for _, e := range plain {
+		if !e.IsDir() && f.read(filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages", e.Name())) == "Keep --steer literal\n" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a --steer inside the message must stay text")
+	}
+}

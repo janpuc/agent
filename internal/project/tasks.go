@@ -36,6 +36,16 @@ func (h Host) Tasks(defaults map[string]int, args []string) error {
 		return errors.New("Usage: agent task new|ls|send|ticket|close|restart [project] ...")
 	}
 	action, rest := args[0], args[1:]
+	// --steer may come before or after the project and task, never inside the message.
+	steer := false
+	if action == "send" {
+		for i := 0; i < len(rest) && i < 3; i++ {
+			if rest[i] == "--steer" {
+				steer, rest = true, append(append([]string{}, rest[:i]...), rest[i+1:]...)
+				break
+			}
+		}
+	}
 	if action == "ls" && len(rest) == 0 {
 		return h.listTasks()
 	}
@@ -57,9 +67,9 @@ func (h Host) Tasks(defaults map[string]int, args []string) error {
 		return h.newTask(name, rest, defaults)
 	case "send":
 		if len(rest) < 2 {
-			return errors.New("Usage: agent task send [project] <id> <message>")
+			return errors.New("Usage: agent task send [--steer] [project] <id> <message>")
 		}
-		return h.sendTask(defaults, name, rest[0], strings.Join(rest[1:], " "))
+		return h.sendTask(defaults, name, rest[0], strings.Join(rest[1:], " "), steer)
 	case "ticket", "close", "restart", "finalize":
 		passed := 1
 		if action == "ticket" {
@@ -119,7 +129,8 @@ func (h Host) Ticket(defaults map[string]int, id string) error {
 
 // sendTask queues a message for a task session. Its extension delivers it at the next idle point
 // as a user message, so nothing is typed into the tab. A stopped task is started to receive it.
-func (h Host) sendTask(defaults map[string]int, name, task, text string) error {
+// A steering message goes to messages/steer/ and reaches a busy task after its current tool call.
+func (h Host) sendTask(defaults map[string]int, name, task, text string, steer bool) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("A message cannot be empty")
 	}
@@ -132,6 +143,9 @@ func (h Host) sendTask(defaults map[string]int, name, task, text string) error {
 		return fmt.Errorf("%s: task %s is closed, open a new task instead", name, task)
 	}
 	inbox := filepath.Join(workspace.TaskState(folder, task), "messages")
+	if steer {
+		inbox = filepath.Join(inbox, "steer")
+	}
 	if err := os.MkdirAll(inbox, 0o700); err != nil {
 		return err
 	}
@@ -143,6 +157,10 @@ func (h Host) sendTask(defaults map[string]int, name, task, text string) error {
 		if err := h.Tasks(defaults, []string{"restart", name, task}); err != nil {
 			return err
 		}
+	}
+	if steer {
+		fmt.Printf("%s: steering message queued for task %s, delivered after its current tool call\n", name, task)
+		return nil
 	}
 	fmt.Printf("%s: message queued for task %s, delivered when it is idle\n", name, task)
 	return nil
