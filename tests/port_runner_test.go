@@ -202,6 +202,27 @@ func TestHelpIsPrintedOnStdout(t *testing.T) {
 	}
 }
 
+// TestUsageErrorsPrintOnlyTheirUsageLine checks that a wrong command prints its Usage line and a
+// pointer to the guide, not the whole grouped guide.
+func TestUsageErrorsPrintOnlyTheirUsageLine(t *testing.T) {
+	if implementation.kind != "go" {
+		t.Skip("the Python runner still appends the guide to a usage error")
+	}
+	f := newFixture(t, "hub")
+	for _, args := range [][]string{{"reply"}, {"ask"}, {"todo", "extra"}, {"--launch", "open"}} {
+		r := f.exec(args...)
+		if r.code == 0 {
+			t.Fatalf("%v succeeded, want a usage error\n%s", args, r)
+		}
+		if !(strings.Contains(r.stderr, "Usage: agent ") || strings.Contains(r.stderr, "usage: agent ")) || !strings.Contains(r.stderr, "Run agent --help for all commands.") {
+			t.Fatalf("%v stderr lacks the usage line or the hint\n%s", args, r)
+		}
+		if strings.Contains(r.stderr, "Projects\n") || strings.Contains(r.stderr, "task new [project]") {
+			t.Fatalf("%v printed the whole guide\n%s", args, r)
+		}
+	}
+}
+
 // TestRunnerRefusesANullProviderPolicy checks that an explicit null is invalid wherever it is
 // set, instead of being read as an absent policy that allows every provider.
 func TestRunnerRefusesANullProviderPolicy(t *testing.T) {

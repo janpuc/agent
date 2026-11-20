@@ -72,8 +72,18 @@ func main() {
 			os.Exit(status.code)
 		}
 		fmt.Fprintf(os.Stderr, "agent: %v\n", err)
+		if usageError(err) {
+			fmt.Fprintln(os.Stderr, "Run agent --help for all commands.")
+		}
 		os.Exit(1)
 	}
+}
+
+// usageError reports whether err is a usage error. Its message is a command's Usage line, so the
+// command prints the one line and a pointer to the guide, not the whole guide.
+func usageError(err error) bool {
+	message := err.Error()
+	return strings.HasPrefix(message, "Usage: agent ") || strings.HasPrefix(message, "usage: agent ")
 }
 
 // exitStatus carries a child's exit code that the command reports without a message.
@@ -90,10 +100,9 @@ func run(args []string) error {
 		fmt.Print(helpText)
 		return nil
 	}
-	// A launch-open without its project is a usage error that still shows the guide.
+	// A launch-open without its project is a usage error like any other.
 	if len(args) >= 2 && args[0] == "--launch" && args[1] == "open" && len(args) != 3 {
-		fmt.Print(helpText)
-		return exitStatus{2}
+		return errors.New("Usage: agent open <registered-project>")
 	}
 	if len(args) == 1 && args[0] == "--main-endpoint" {
 		// Before the registry read, so a broken registry can still be repaired by chezmoi update.
