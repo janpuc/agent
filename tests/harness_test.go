@@ -74,6 +74,7 @@ type fixture struct {
 	registry map[string]any
 	extra    []string // environment for the next command only
 	stdin    string
+	cwd      string // working directory for the next command, home when empty
 }
 
 // The site in every fixture: an operator who sends requests from a laptop, a hub host that
@@ -185,11 +186,21 @@ func (f *fixture) input(text string) *fixture {
 	return &copy
 }
 
+// in returns a copy that runs the next command from dir.
+func (f *fixture) in(dir string) *fixture {
+	copy := *f
+	copy.cwd = dir
+	return &copy
+}
+
 func (f *fixture) exec(args ...string) result {
 	f.t.Helper()
 	command := exec.Command(implementation.command[0], append(implementation.command[1:], args...)...)
 	command.Env = f.environment()
 	command.Dir = f.home
+	if f.cwd != "" {
+		command.Dir = f.cwd
+	}
 	command.Stdin = strings.NewReader(f.stdin)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

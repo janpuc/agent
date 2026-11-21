@@ -251,12 +251,40 @@ func escaped(data []byte) []byte {
 	return out
 }
 
+// senderInCwd names the local project whose workspace holds the current directory, so a shell
+// outside a Pi session can still ask as that project. It returns "" anywhere else.
+func senderInCwd(reg *registry.Registry, host, root string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	relative, err := filepath.Rel(root, cwd)
+	if err != nil || relative == "." || relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	name, _, _ := strings.Cut(relative, string(filepath.Separator))
+	if _, ok := reg.Projects[name]; !ok || reg.ProjectHost(name) != host {
+		return ""
+	}
+	return name
+}
+
 // Ask delivers one request from a project agent, or from the operator's laptop client.
 func Ask(reg *registry.Registry, home, host, root, target, text string, clientOperator bool) error {
 	if err := Target(reg, home, target); err != nil {
 		return err
 	}
 	sender := os.Getenv("PI_PROJECT")
+	if sender == "" && !clientOperator {
+		sender = senderInCwd(reg, host, root)
+	}
 	operator, err := reg.Operator()
 	if err != nil {
 		return err
@@ -272,7 +300,7 @@ func Ask(reg *registry.Registry, home, host, root, target, text string, clientOp
 		sender = operator
 	}
 	if sender == "" {
-		return errors.New("agent ask must run inside a project agent, PI_PROJECT is unset")
+		return errors.New("agent ask needs a sender: run it in a project session or inside a project workspace")
 	}
 	if sender != operator {
 		if _, ok := reg.Projects[sender]; !ok {

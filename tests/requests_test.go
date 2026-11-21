@@ -293,3 +293,23 @@ func TestRemoteProjectDeliversAndFetchesOverSSH(t *testing.T) {
 		t.Fatalf("second fetch did not acknowledge %v: %+v", reply["id"], calls[len(calls)-1])
 	}
 }
+
+// A shell inside a workspace asks as that project, a shell anywhere else has no sender.
+func TestAskInfersTheSenderFromTheWorkspace(t *testing.T) {
+	if implementation.kind == "python" {
+		t.Skip("the Python runner needs PI_PROJECT")
+	}
+	f := newFixture(t, "hub")
+	garden := f.initialize("garden")
+	admin := f.initialize("admin")
+	notes := filepath.Join(admin, "notes")
+	must(t, os.MkdirAll(notes, 0o755))
+
+	f.ok(f.in(notes).agent("ask", "garden", "Water", "the", "plants"))
+	asked := jsonFiles(t, filepath.Join(garden, ".agent/inbox"))
+	if len(asked) != 1 || asked[0]["from"] != "admin" {
+		t.Fatalf("garden inbox %v", asked)
+	}
+	f.fails(f.in(garden).agent("ask", "garden", "Help"), "Cannot ask your own project")
+	f.fails(f.agent("ask", "garden", "Help"), "agent ask needs a sender")
+}
