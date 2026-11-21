@@ -237,3 +237,26 @@ func TestArchiveLeavesLiveUnmanagedProcessAlone(t *testing.T) {
 		t.Fatal("a refused archive changed the lifecycle")
 	}
 }
+
+// An app that does not answer session.select only costs a warning. Opening a project and closing a
+// task must still work, since showing a tab is a convenience.
+func TestAnAppThatDoesNotAnswerNeverFailsTheCommand(t *testing.T) {
+	f := newFixture(t, "hub")
+	state := loadRexAt(f)
+	state.Clients = []any{map[string]any{
+		"client_id": "client:app", "connection_state": "connected",
+		"info": map[string]any{"kind": "app"},
+	}}
+	state.SelectFails = true
+	state.saveAt(f)
+	f.open("garden")
+	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
+	r := f.agent("task", "close", "garden", "audit")
+	f.ok(r)
+	if !strings.Contains(r.String(), "did not show the tab") {
+		t.Fatalf("no warning\n%s", r)
+	}
+	if _, err := os.Stat(filepath.Join(f.workspace("garden"), ".agent/tasks/audit/close-requested")); err != nil {
+		t.Fatal("close was not requested")
+	}
+}

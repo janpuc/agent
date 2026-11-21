@@ -249,22 +249,23 @@ func (h Host) orderSessions() error {
 }
 
 // selectSession shows the tab in every connected Rex app. Rex cannot say which app the operator is
-// looking at, so none is skipped.
+// looking at, so none is skipped. Showing a tab is a convenience: an app that does not answer, such
+// as one asleep or without Remote Control, gets a warning and never fails the command that asked.
 func (h Host) selectSession(name, session, window string) error {
 	clients, err := rex.Clients()
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "%s: could not list Rex apps to show the tab: %v\n", name, err)
+		return nil
 	}
-	var failed error
 	for _, client := range clients {
 		if client.Info.Kind != "app" || client.State != "connected" {
 			continue
 		}
-		if err := rex.Select(client.ID, session, window); err != nil && failed == nil {
-			failed = fmt.Errorf("%s: showing the tab in Rex app %s: %w", name, client.ID, err)
+		if err := rex.Select(client.ID, session, window); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: Rex app %s did not show the tab: %v\n", name, client.ID, err)
 		}
 	}
-	return failed
+	return nil
 }
 
 // requireCapacity refuses a new runner when this host already runs maxAgents of them.

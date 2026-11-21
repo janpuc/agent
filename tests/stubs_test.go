@@ -130,6 +130,8 @@ func piStub() int {
 type rexState struct {
 	Sessions []*rexSession `json:"sessions"`
 	Clients  []any         `json:"clients"`
+	// SelectFails makes every app refuse session.select, like an app that does not answer.
+	SelectFails bool `json:"select_fails"`
 	// Process answers block call <block> process. Missing blocks report an idle terminal.
 	Process map[string]any `json:"process"`
 	Next    int            `json:"next"`
@@ -213,6 +215,10 @@ func rexStub() int {
 	}
 	switch {
 	case len(args) >= 1 && args[0] == "-C":
+		if state.SelectFails {
+			fmt.Fprintln(os.Stderr, `Error: "Hermes" did not answer within 10s; the action may still run.`)
+			return 1
+		}
 		return reply(map[string]any{})
 	case len(args) >= 1 && args[0] == "ls":
 		sessions := []map[string]any{}
