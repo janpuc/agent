@@ -41,7 +41,7 @@ Requests
   reply <project> <id> <text>  Reply from the receiving project    agent reply home <id> "Verified"
 
 Jobs on workers, machines that are on only when Jan wants (a worker that is off is normal: the job waits)
-  job run <worker> <repo> [--commit <rev>] [--fetch <path>]... -- <command>  agent job run hermes caption-slate -- xcodebuild -list
+  job run <worker> <repo> [--commit <rev>] [--fetch <path>]... -- ./<script> [args]  agent job run hermes caption-slate --fetch build -- ./scripts/build.sh
   job ls                List jobs and status                     agent job ls
   job cancel <id>       Cancel a queued job                      agent job cancel <id>
 
@@ -656,6 +656,9 @@ func todo(home string) error {
 		for _, question := range notes.PendingApprovals(filepath.Join(root, name)) {
 			fmt.Printf("%s: %s\n", name, question)
 		}
+	}
+	for _, line := range jobs.Waiting(home) {
+		fmt.Printf("jobs: %s\n", line)
 	}
 	return nil
 }

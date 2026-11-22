@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,34 +33,44 @@ var (
 	idPattern     = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$`)
 )
 
-// programs a job may start by name. Anything else is a script committed in the repository and
-// started as ./path, so what runs on the worker is reviewable in git.
-var programs = map[string]bool{"xcodebuild": true, "xcrun": true, "swift": true, "mise": true, "make": true, "xtool": true}
-
 // Spec is what the worker receives: one JSON line on stdin, followed by a git bundle for a job.
 type Spec struct {
-	ID      string   `json:"id"`
-	Project string   `json:"project"`
-	Repo    string   `json:"repo"`
-	Commit  string   `json:"commit,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	// Path is the file or folder a fetch returns, relative to the checkout.
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Repo    string `json:"repo"`
+	Commit  string `json:"commit,omitempty"`
+	// Args start with an executable script committed in the repository, as ./path, so what runs
+	// on the worker is reviewable in git. The worker checks it in the commit before running it.
+	Args []string `json:"args,omitempty"`
+	// Fetch lists the files or folders a job keeps after it succeeds, relative to the checkout.
+	Fetch []string `json:"fetch,omitempty"`
+	// Path is the kept file or folder a fetch returns.
 	Path string `json:"path,omitempty"`
 }
 
 // Job is a queued or finished job on the execution host.
 type Job struct {
 	Spec
-	Worker   string   `json:"worker"`
-	Task     string   `json:"task,omitempty"`
-	Fetch    []string `json:"fetch,omitempty"`
-	Status   string   `json:"status"` // queued, running, done, failed or cancelled
-	Created  string   `json:"created"`
-	Started  string   `json:"started,omitempty"`
-	Finished string   `json:"finished,omitempty"`
-	Attempts int      `json:"attempts"`
-	Exit     *int     `json:"exit,omitempty"`
-	Note     string   `json:"note,omitempty"`
+	Worker string `json:"worker"`
+	Task   string `json:"task,omitempty"`
+	// Status is queued, running, fetching, delivering, done, failed or cancelled. fetching and
+	// delivering follow a finished build, so a retry never runs the build again.
+	Status   string `json:"status"`
+	Created  string `json:"created"`
+	Started  string `json:"started,omitempty"`
+	Finished string `json:"finished,omitempty"`
+	Attempts int    `json:"attempts"`
+	Exit     *int   `json:"exit,omitempty"`
+	Note     string `json:"note,omitempty"`
+	// Fetches counts attempts to fetch the kept files of a finished build.
+	Fetches int `json:"fetches,omitempty"`
+	// Refusal is the last reason the worker gave for refusing jobs, reported to the project once.
+	Refusal string `json:"refusal,omitempty"`
+	// Outcome is done or failed once the result is recorded, Status follows once it is delivered.
+	Outcome string `json:"outcome,omitempty"`
+	// Delivery is the inbox item id of the result, so a repeated delivery overwrites it.
+	Delivery    string `json:"delivery,omitempty"`
+	Undelivered string `json:"undelivered,omitempty"`
 }
 
 // Dir holds one folder per job: job.json, log and artifacts/.
@@ -74,10 +83,13 @@ func validName(kind, name string) error {
 	return nil
 }
 
-// validPath accepts a relative path that stays inside the checkout.
+// validPath accepts a relative path that stays inside the checkout and out of its .git.
 func validPath(path string) error {
 	if path == "" || strings.ContainsRune(path, 0) || !filepath.IsLocal(path) {
 		return fmt.Errorf("invalid path %q: it must be relative and stay inside the repository", path)
+	}
+	if slices.Contains(strings.Split(filepath.ToSlash(filepath.Clean(path)), "/"), ".git") {
+		return fmt.Errorf("invalid path %q: .git is not part of a job", path)
 	}
 	return nil
 }
@@ -95,15 +107,11 @@ func validArgs(args []string) error {
 			return errors.New("a job argument is too long or contains NUL")
 		}
 	}
-	program := args[0]
-	if script, ok := strings.CutPrefix(program, "./"); ok {
-		return validPath(script)
+	script, ok := strings.CutPrefix(args[0], "./")
+	if !ok {
+		return fmt.Errorf("a job starts an executable script committed in the repository, as ./path, not %q", args[0])
 	}
-	if !programs[program] {
-		return fmt.Errorf("a job starts one of %s or a script committed in the repository as ./path, not %q",
-			strings.Join(slices.Sorted(maps.Keys(programs)), ", "), program)
-	}
-	return nil
+	return validPath(script)
 }
 
 func (s Spec) validate(job bool) error {
@@ -119,6 +127,14 @@ func (s Spec) validate(job bool) error {
 	if job {
 		if !commitPattern.MatchString(s.Commit) {
 			return fmt.Errorf("invalid commit %q", s.Commit)
+		}
+		if len(s.Fetch) > maxArgs {
+			return fmt.Errorf("a job keeps at most %d paths", maxArgs)
+		}
+		for _, path := range s.Fetch {
+			if err := validPath(path); err != nil {
+				return err
+			}
 		}
 		return validArgs(s.Args)
 	}

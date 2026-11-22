@@ -86,6 +86,9 @@ type workerStub struct {
 	Agent   string `json:"agent"`
 	Offline bool   `json:"offline"`
 	DropJob bool   `json:"dropJob"`
+	// DropFetch cuts the connection during a fetch, Refuse fails every connection with that line.
+	DropFetch bool   `json:"dropFetch"`
+	Refuse    string `json:"refuse"`
 }
 
 func sshStub() int {
@@ -96,7 +99,12 @@ func sshStub() int {
 	if worker.Name != "" && len(os.Args) > 1 && os.Args[1] == worker.Name {
 		logCall("")
 		operation := strings.Join(os.Args[2:], " ")
-		if worker.Offline || worker.DropJob && operation == "job" {
+		if worker.Refuse != "" {
+			io.Copy(io.Discard, os.Stdin)
+			fmt.Fprintln(os.Stderr, worker.Refuse)
+			return 255
+		}
+		if worker.Offline || worker.DropJob && operation == "job" || worker.DropFetch && operation == "fetch" {
 			io.Copy(io.Discard, os.Stdin)
 			fmt.Fprintf(os.Stderr, "ssh: connect to host %s port 22: Operation timed out\n", worker.Name)
 			return 255
