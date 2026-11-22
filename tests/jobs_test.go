@@ -331,30 +331,30 @@ func TestJobFetchOfTheWholeCheckoutLeavesGitBehind(t *testing.T) {
 	}
 }
 
-func TestJobRefusalTellsEachSessionOnce(t *testing.T) {
+func TestJobRefusalTellsTheProjectOnce(t *testing.T) {
 	f, _ := jobFixture(t, "#!/bin/sh\n")
 	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
 	refuse := map[string]any{"refuse": "Permission denied (publickey)."}
-	first := f.queueJob(refuse, "--", "./build.sh")
-	second := f.queueJob(refuse, "--", "./build.sh", "two")
+	// The task's job is the oldest, so it is the one whose notice the drain writes.
 	f.setWorker(map[string]any{"offline": true})
 	out := f.ok(f.with("PI_PROJECT=garden", "PI_TASK=audit").agent("job", "run", "lab-mac", "app", "--", "./build.sh"))
-	third := jobIDPattern.FindStringSubmatch(out.stdout)[1]
-	f.setWorker(refuse)
+	fromTask := jobIDPattern.FindStringSubmatch(out.stdout)[1]
+	time.Sleep(1100 * time.Millisecond)
+	first := f.queueJob(refuse, "--", "./build.sh")
+	second := f.queueJob(refuse, "--", "./build.sh", "two")
 	f.ok(f.agent("job", "--drain"))
 	f.ok(f.agent("job", "--drain"))
-	if items := f.gardenInbox(); len(items) != 1 || items[0]["inReplyTo"] != first && items[0]["inReplyTo"] != second {
-		t.Fatalf("want one project notice for two jobs, got %v", items)
+	items := f.gardenInbox()
+	if len(items) != 1 || items[0]["inReplyTo"] != fromTask || !strings.Contains(items[0]["text"].(string), "queued by task audit") {
+		t.Fatalf("want one project notice for three jobs, naming the task's job, got %v", items)
 	}
-	for _, id := range []string{first, second, third} {
+	for _, id := range []string{first, second, fromTask} {
 		if job := f.job(id); job["refusal"] != "Permission denied (publickey)." || job["status"] != "queued" {
 			t.Fatalf("job %s %v", id, job)
 		}
 	}
-	messages := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages")
-	entries, err := os.ReadDir(messages)
-	must(t, err)
-	if len(entries) != 1 || !strings.Contains(f.read(filepath.Join(messages, entries[0].Name())), "refuses job "+third) {
+	// The task's job is told through the project, which keeps it even if the task closes.
+	if entries, _ := os.ReadDir(filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages")); len(entries) != 0 {
 		t.Fatalf("task notices %v", entries)
 	}
 }
@@ -411,6 +411,11 @@ func TestJobResultReachesItsTaskOnceAndAClosedTasksProject(t *testing.T) {
 	f.ok(f.agent("job", "--drain"))
 	if job := f.job(closing); job["status"] != "done" {
 		t.Fatalf("job of a closing task %v", job)
+	}
+	// The queued copy was claimed, so the closing task cannot take it as well.
+	claimedName := f.job(closing)["delivery"].(string) + ".md"
+	if f.exists(filepath.Join(messages, claimedName)) || !f.exists(filepath.Join(messages, "claimed", claimedName)) {
+		t.Fatal("the result for a closing task was not claimed from its queue")
 	}
 	if items := f.gardenInbox(); len(items) != 1 || items[0]["inReplyTo"] != closing || !strings.Contains(items[0]["text"].(string), "Task audit was closed") {
 		t.Fatalf("project inbox %v", items)
