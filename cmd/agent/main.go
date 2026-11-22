@@ -52,7 +52,7 @@ Overview
 Tasks
   task new [project] <TICKET|--slug slug> <brief>  Open a task      agent task new home --slug audit "Audit speakers"
   task new [project] --wait <TICKET|--slug slug>  Open, paste brief  agent task new home --wait HA-124
-  task new [project] --model <provider/id[:level]> ...  Other model  agent task new home --model agy/gemini-4-neon:high --slug try "Try it"
+  task new [project] --model <provider/id[:level]> ...  Other model  agent task new home --model antigravity/gemini-4-neon:high --slug try "Try it"
   <TICKET>              Show its task, or open it with --wait       agent HA-125
   task ls [project]     List tasks and status                    agent task ls
   task send [project] <id> <message>  Message a task session  agent task send home audit "Check the bridge too"
