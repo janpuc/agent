@@ -15,6 +15,7 @@ import (
 
 	"github.com/janpuc/agent/internal/digest"
 	"github.com/janpuc/agent/internal/dispatch"
+	"github.com/janpuc/agent/internal/jobs"
 	"github.com/janpuc/agent/internal/notes"
 	"github.com/janpuc/agent/internal/project"
 	"github.com/janpuc/agent/internal/registry"
@@ -38,6 +39,11 @@ Projects
 Requests
   ask <project> <text>   Ask the system's owner                   agent ask dotfiles "Update the standards"
   reply <project> <id> <text>  Reply from the receiving project    agent reply home <id> "Verified"
+
+Jobs on workers, machines that are on only when Jan wants (a worker that is off is normal: the job waits)
+  job run <worker> <repo> [--commit <rev>] [--fetch <path>]... -- <command>  agent job run hermes caption-slate -- xcodebuild -list
+  job ls                List jobs and status                     agent job ls
+  job cancel <id>       Cancel a queued job                      agent job cancel <id>
 
 Overview
   todo                  Open questions from every STATE.md      agent todo
@@ -104,6 +110,15 @@ func run(args []string) error {
 	// A launch-open without its project is a usage error like any other.
 	if len(args) >= 2 && args[0] == "--launch" && args[1] == "open" && len(args) != 3 {
 		return errors.New("Usage: agent open <registered-project>")
+	}
+	if len(args) == 1 && args[0] == "--worker-endpoint" {
+		// A worker such as a laptop is a dispatch client, so this runs before the client check.
+		hostPath(home)
+		err := jobs.Endpoint(home, os.Stdin, os.Stdout, os.Stderr)
+		if code, ok := jobs.ExitCode(err); ok {
+			return exitStatus{code}
+		}
+		return err
 	}
 	if len(args) == 1 && args[0] == "--main-endpoint" {
 		// Before the registry read, so a broken registry can still be repaired by chezmoi update.
@@ -177,6 +192,12 @@ func run(args []string) error {
 			return taskEntry(home, command)
 		case "scratch":
 			return scratchEntry(home, command)
+		case "job":
+			root, err := reg.Root(home, host)
+			if err != nil {
+				return err
+			}
+			return jobs.Entry(reg, home, host, root, command[1:])
 		case "ask", "reply":
 			return requestEntry(home, command, false)
 		case "todo":

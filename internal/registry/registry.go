@@ -34,6 +34,9 @@ type Platform struct {
 	Remote Remote `json:"remote"`
 	// Tickets is the project that opens a task for a bare ticket id outside any project.
 	Tickets string `json:"tickets"`
+	// Workers are machines that run jobs over SSH when they are switched on, such as a laptop.
+	// The SSH config names each one, authorized_keys on the worker forces --worker-endpoint.
+	Workers []string `json:"workers"`
 }
 
 // Remote is the one project on another host that talks to the hub over SSH.

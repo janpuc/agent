@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -77,7 +78,41 @@ func miseStub() int {
 }
 
 // ssh logs its arguments and input and prints ssh-out.json.
+// workerStub is the machine behind ssh <name> when worker.json names it: offline, cut off
+// during a job, or a real worker endpoint in its own home.
+type workerStub struct {
+	Name    string `json:"name"`
+	Home    string `json:"home"`
+	Agent   string `json:"agent"`
+	Offline bool   `json:"offline"`
+	DropJob bool   `json:"dropJob"`
+}
+
 func sshStub() int {
+	var worker workerStub
+	if data, err := os.ReadFile(filepath.Join(testDir(), "worker.json")); err == nil {
+		json.Unmarshal(data, &worker)
+	}
+	if worker.Name != "" && len(os.Args) > 1 && os.Args[1] == worker.Name {
+		logCall("")
+		operation := strings.Join(os.Args[2:], " ")
+		if worker.Offline || worker.DropJob && operation == "job" {
+			io.Copy(io.Discard, os.Stdin)
+			fmt.Fprintf(os.Stderr, "ssh: connect to host %s port 22: Operation timed out\n", worker.Name)
+			return 255
+		}
+		command := exec.Command(worker.Agent, "--worker-endpoint")
+		command.Env = append(os.Environ(), "HOME="+worker.Home, "SSH_ORIGINAL_COMMAND="+operation)
+		command.Dir = worker.Home
+		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := command.Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				return exit.ExitCode()
+			}
+			return 255
+		}
+		return 0
+	}
 	logCall(readStdin())
 	data, err := os.ReadFile(filepath.Join(testDir(), "ssh-out.json"))
 	if err != nil {
