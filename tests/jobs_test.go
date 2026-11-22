@@ -19,7 +19,7 @@ func jobFixture(t *testing.T, script string) (*fixture, string) {
 	f := newFixture(t, "hub")
 	f.registry["platform"].(map[string]any)["workers"] = []any{"lab-mac"}
 	f.saveRegistry()
-	repo := filepath.Join(f.workspace("garden"), "app")
+	repo := filepath.Join(f.open("garden"), "app")
 	must(t, os.MkdirAll(repo, 0o755))
 	f.git(repo, "init", "-q")
 	must(t, os.WriteFile(filepath.Join(repo, "build.sh"), []byte(script), 0o755))
@@ -311,5 +311,99 @@ func TestJobOnAnOnlineWorkerRunsWithoutATimer(t *testing.T) {
 	}
 	if len(f.gardenInbox()) != 1 {
 		t.Fatalf("inbox %v", f.gardenInbox())
+	}
+}
+
+func TestJobFetchOfTheWholeCheckoutLeavesGitBehind(t *testing.T) {
+	f, _ := jobFixture(t, "#!/bin/sh\n")
+	f.fails(f.with("PI_PROJECT=garden").agent("job", "run", "lab-mac", "app", "--fetch", "x/.GIT/config", "--", "./build.sh"), ".git is not part of a job")
+	id := f.queueJob(map[string]any{}, "--fetch", ".", "--", "./build.sh")
+	f.ok(f.agent("job", "--drain"))
+	if job := f.job(id); job["status"] != "done" {
+		t.Fatalf("job %v", job)
+	}
+	artifacts := filepath.Join(f.home, ".local/state/agents/jobs", id, "artifacts")
+	if _, err := os.Stat(filepath.Join(artifacts, "build.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(artifacts, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("git metadata was fetched: %v", err)
+	}
+}
+
+func TestJobRefusalTellsEachSessionOnce(t *testing.T) {
+	f, _ := jobFixture(t, "#!/bin/sh\n")
+	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
+	refuse := map[string]any{"refuse": "Permission denied (publickey)."}
+	first := f.queueJob(refuse, "--", "./build.sh")
+	second := f.queueJob(refuse, "--", "./build.sh", "two")
+	f.setWorker(map[string]any{"offline": true})
+	out := f.ok(f.with("PI_PROJECT=garden", "PI_TASK=audit").agent("job", "run", "lab-mac", "app", "--", "./build.sh"))
+	third := jobIDPattern.FindStringSubmatch(out.stdout)[1]
+	f.setWorker(refuse)
+	f.ok(f.agent("job", "--drain"))
+	f.ok(f.agent("job", "--drain"))
+	if items := f.gardenInbox(); len(items) != 1 || items[0]["inReplyTo"] != first && items[0]["inReplyTo"] != second {
+		t.Fatalf("want one project notice for two jobs, got %v", items)
+	}
+	for _, id := range []string{first, second, third} {
+		if job := f.job(id); job["refusal"] != "Permission denied (publickey)." || job["status"] != "queued" {
+			t.Fatalf("job %s %v", id, job)
+		}
+	}
+	messages := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages")
+	entries, err := os.ReadDir(messages)
+	must(t, err)
+	if len(entries) != 1 || !strings.Contains(f.read(filepath.Join(messages, entries[0].Name())), "refuses job "+third) {
+		t.Fatalf("task notices %v", entries)
+	}
+}
+
+func TestJobResultReachesItsTaskOnceAndAClosedTasksProject(t *testing.T) {
+	f, _ := jobFixture(t, "#!/bin/sh\necho built\n")
+	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
+	f.setWorker(map[string]any{"offline": true})
+	queue := func() string {
+		out := f.ok(f.with("PI_PROJECT=garden", "PI_TASK=audit").agent("job", "run", "lab-mac", "app", "--", "./build.sh"))
+		return jobIDPattern.FindStringSubmatch(out.stdout)[1]
+	}
+	id := queue()
+	f.setWorker(map[string]any{})
+	f.ok(f.agent("job", "--drain"))
+	job := f.job(id)
+	if job["status"] != "done" {
+		t.Fatalf("job %v", job)
+	}
+	messages := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages")
+	name := job["delivery"].(string) + ".md"
+	if !strings.Contains(f.read(filepath.Join(messages, name)), "finished, exit 0") {
+		t.Fatalf("no result for the task in %s", messages)
+	}
+	// The task takes it, as its extension does, then a drain that died before recording the
+	// delivery delivers again. That makes no second copy.
+	must(t, os.MkdirAll(filepath.Join(messages, "delivered"), 0o700))
+	must(t, os.Rename(filepath.Join(messages, name), filepath.Join(messages, "delivered", name)))
+	job["status"] = "delivering"
+	f.write(filepath.Join(f.home, ".local/state/agents/jobs", id, "job.json"), mustJSON(t, job))
+	f.ok(f.agent("job", "--drain"))
+	entries, err := os.ReadDir(messages)
+	must(t, err)
+	if len(entries) != 1 || entries[0].Name() != "delivered" {
+		t.Fatalf("task messages after a second delivery %v", entries)
+	}
+	if len(f.gardenInbox()) != 0 {
+		t.Fatal("a task's result went to the project too")
+	}
+	f.setWorker(map[string]any{"offline": true})
+	late := queue()
+	metaPath := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/meta.json")
+	meta := readJSON[map[string]any](t, metaPath)
+	meta["status"] = "closed"
+	f.write(metaPath, mustJSON(t, meta))
+	f.setWorker(map[string]any{})
+	f.ok(f.agent("job", "--drain"))
+	items := f.gardenInbox()
+	if len(items) != 1 || items[0]["inReplyTo"] != late || !strings.Contains(items[0]["text"].(string), "Task audit was closed") {
+		t.Fatalf("project inbox %v", items)
 	}
 }

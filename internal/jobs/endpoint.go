@@ -102,7 +102,8 @@ func realDir(path string) error {
 	return nil
 }
 
-// prune removes job records older than two weeks that nothing runs.
+// prune removes the log, kept files and leftovers of job records older than two weeks that
+// nothing runs. The exit code stays for good, so a very late reconnect never builds again.
 func prune(records string) {
 	entries, err := os.ReadDir(records)
 	if err != nil {
@@ -114,10 +115,19 @@ func prune(records string) {
 		if err != nil || !info.IsDir() || !idPattern.MatchString(entry.Name()) || time.Since(info.ModTime()) < keepRecord {
 			continue
 		}
-		if unlock, ok := tryLock(filepath.Join(path, "run.lock")); ok {
-			unlock()
-			os.RemoveAll(path)
+		unlock, ok := tryLock(filepath.Join(path, "run.lock"))
+		if !ok {
+			continue
 		}
+		if _, done := finished(path); done {
+			files, _ := os.ReadDir(path)
+			for _, file := range files {
+				if name := file.Name(); name != "exit" && name != "run.lock" {
+					os.RemoveAll(filepath.Join(path, name))
+				}
+			}
+		}
+		unlock()
 	}
 }
 
@@ -180,6 +190,11 @@ func job(builds, record string, spec Spec, input io.Reader, stdout, stderr io.Wr
 				}
 				return ok
 			})
+			continue
+		}
+		// The earlier run may have recorded its exit and let go just before this lock was taken.
+		if _, done := finished(record); done {
+			unlock()
 			continue
 		}
 		defer unlock()
@@ -401,6 +416,13 @@ func copyTree(source, target string, logFile io.Writer) error {
 	return filepath.WalkDir(source, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// Git metadata never leaves the worker, in any letter case since macOS volumes ignore it.
+		if strings.EqualFold(entry.Name(), ".git") {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		rel, err := filepath.Rel(source, current)
 		if err != nil {

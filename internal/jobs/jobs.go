@@ -88,7 +88,8 @@ func validPath(path string) error {
 	if path == "" || strings.ContainsRune(path, 0) || !filepath.IsLocal(path) {
 		return fmt.Errorf("invalid path %q: it must be relative and stay inside the repository", path)
 	}
-	if slices.Contains(strings.Split(filepath.ToSlash(filepath.Clean(path)), "/"), ".git") {
+	if slices.ContainsFunc(strings.Split(filepath.ToSlash(filepath.Clean(path)), "/"),
+		func(part string) bool { return strings.EqualFold(part, ".git") }) {
 		return fmt.Errorf("invalid path %q: .git is not part of a job", path)
 	}
 	return nil

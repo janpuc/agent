@@ -20,6 +20,7 @@ import (
 	"github.com/janpuc/agent/internal/actions"
 	"github.com/janpuc/agent/internal/registry"
 	"github.com/janpuc/agent/internal/requests"
+	"github.com/janpuc/agent/internal/workspace"
 )
 
 const (
@@ -133,6 +134,7 @@ func queue(reg *registry.Registry, home, host, root string, args []string) error
 			"%s Tell Jan once that the job waits for %s, then go on with other work or stop. "+
 			"Do not retry, poll, or build on another machine.\n", worker, id, worker, reply, worker)
 	default:
+		reason = strings.TrimSuffix(reason, ".")
 		fmt.Printf("%s answers but refuses jobs: %s. This needs Jan or dotfiles, not a retry. Job %s is queued and starts by itself once it is fixed. "+
 			"%s Tell Jan once, quoting that reason, then go on with other work or stop. "+
 			"Do not retry, poll, or build on another machine.\n", worker, reason, id, reply)
@@ -299,7 +301,13 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 		return err
 	}
 	defer unlock()
-	waiting := map[string]bool{}
+	type answer struct {
+		state  reachability
+		reason string
+	}
+	answers := map[string]answer{}
+	// noticed holds the projects told about a refusal in this drain, one notice each.
+	noticed := map[string]bool{}
 	for {
 		jobs, err := all(home)
 		if err != nil {
@@ -314,7 +322,7 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 				}
 				continue
 			}
-			if job.Status != "queued" && job.Status != "running" && job.Status != "fetching" || waiting[job.Worker] {
+			if job.Status != "queued" && job.Status != "running" && job.Status != "fetching" {
 				continue
 			}
 			if !workerKnown(reg, job.Worker) {
@@ -323,12 +331,20 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 				}
 				continue
 			}
-			state, reason := ping(job.Worker)
-			if state != online {
-				waiting[job.Worker] = true
-				if err := noteRefusal(reg, home, host, root, job, state, reason); err != nil {
+			known, asked := answers[job.Worker]
+			if !asked {
+				known.state, known.reason = ping(job.Worker)
+				answers[job.Worker] = known
+			}
+			switch known.state {
+			case offline:
+				continue
+			case refused:
+				key := job.Project + "\x00" + job.Task + "\x00" + known.reason
+				if err := noteRefusal(reg, home, host, root, job, known.reason, noticed[key]); err != nil {
 					return err
 				}
+				noticed[key] = true
 				continue
 			}
 			if job.Refusal != "" {
@@ -342,7 +358,7 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 				return err
 			}
 			if !advanced {
-				waiting[job.Worker] = true
+				answers[job.Worker] = answer{state: offline}
 			}
 			moved = true
 		}
@@ -352,19 +368,28 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 	}
 }
 
-// noteRefusal tells the project once per reason that a worker answers but refuses jobs, so the
-// agent can tell Jan. A worker that is merely off is not news.
-func noteRefusal(reg *registry.Registry, home, host, root string, job Job, state reachability, reason string) error {
-	if state != refused || job.Refusal == reason {
+// noteRefusal tells the session that queued the job, once per reason, that its worker answers
+// but refuses jobs, so the agent can tell Jan. Jobs of the same session share one notice. The
+// reason is recorded only after the notice is written, so a failed notice is tried again.
+func noteRefusal(reg *registry.Registry, home, host, root string, job Job, reason string, alreadyTold bool) error {
+	if job.Refusal == reason {
 		return nil
 	}
-	job.Refusal = reason
-	if err := save(home, job); err != nil {
-		return err
+	if !alreadyTold {
+		text := fmt.Sprintf("%s answers but refuses job %s: %s. This needs Jan or dotfiles, not a retry. The job stays queued and "+
+			"starts by itself once it is fixed. Tell Jan once, quoting the reason, and do not retry or build elsewhere.\n", job.Worker, job.ID, strings.TrimSuffix(reason, "."))
+		id, err := requests.NewID()
+		if err != nil {
+			return err
+		}
+		// A queued notice for a task that did not start is told: it arrives when the task starts.
+		if err := notify(reg, home, host, root, job, text, id); err != nil && !errors.Is(err, errNotStarted) {
+			// Not recorded, so the next drain tries again. Nothing else waits on it.
+			return nil
+		}
 	}
-	text := fmt.Sprintf("%s answers but refuses job %s: %s. This needs Jan or dotfiles, not a retry. The job stays queued and "+
-		"starts by itself once it is fixed. Tell Jan once, quoting the reason, and do not retry or build elsewhere.\n", job.Worker, job.ID, reason)
-	return send(reg, home, host, root, job, text, "")
+	job.Refusal = reason
+	return save(home, job)
 }
 
 // step runs the build or fetches its files, whichever the job needs next. It returns false when
@@ -612,18 +637,11 @@ func logTail(path string) string {
 	return tail
 }
 
-// deliver hands the result over and marks the job done or failed. A task that cannot take it,
-// because it was closed, leaves it to the project inbox. A result that cannot be delivered at
-// all stays delivering for the next drain, which only fails on a record it cannot write.
+// deliver hands the result over and marks the job done or failed. A closed task's result goes to
+// the project inbox. A result that cannot be delivered stays delivering for the next drain, which
+// fails only on a record it cannot write.
 func deliver(reg *registry.Registry, home, host, root string, job Job) error {
-	text := message(home, job)
-	err := send(reg, home, host, root, job, text, job.Delivery)
-	if err != nil && job.Task != "" {
-		project := job
-		project.Task = ""
-		err = send(reg, home, host, root, project, text+fmt.Sprintf("\nTask %s could not take this result: %v\n", job.Task, err), job.Delivery)
-	}
-	if err != nil {
+	if err := notify(reg, home, host, root, job, message(home, job), job.Delivery); err != nil {
 		job.Undelivered = err.Error()
 		return save(home, job)
 	}
@@ -631,28 +649,61 @@ func deliver(reg *registry.Registry, home, host, root string, job Job) error {
 	return save(home, job)
 }
 
-// send puts text in the project inbox as a reply to the job id, under id when given so a repeat
-// overwrites the same item, or sends it to the task that queued the job, which starts the task if
-// it stopped.
+var (
+	errTaskClosed = errors.New("the task is closed")
+	errNotStarted = errors.New("the message is queued but the task did not start")
+)
+
+// notify sends text to the session that queued the job, or to the project inbox when that task
+// was closed in the meantime.
+func notify(reg *registry.Registry, home, host, root string, job Job, text, id string) error {
+	err := send(reg, home, host, root, job, text, id)
+	if errors.Is(err, errTaskClosed) {
+		project := job
+		project.Task = ""
+		err = send(reg, home, host, root, project, text+fmt.Sprintf("\nTask %s was closed before this arrived.\n", job.Task), id)
+	}
+	return err
+}
+
+// send puts text in the project inbox as a reply to the job id, or in the queue of the task that
+// queued the job, under id either way, so sending again never makes a second copy.
 func send(reg *registry.Registry, home, host, root string, job Job, text, id string) error {
-	if job.Task != "" {
-		self, err := os.Executable()
-		if err != nil {
+	if job.Task == "" {
+		item := requests.Request{ID: id, From: job.Worker, To: job.Project, Text: text, Created: requests.Timestamp(),
+			Status: "new", InReplyTo: job.ID}
+		return requests.Store(reg, home, host, root, job.Project, id, item)
+	}
+	folder := filepath.Join(root, job.Project)
+	meta, err := workspace.ReadTask(folder, job.Task)
+	if err != nil {
+		return err
+	}
+	if meta.Status == "closed" {
+		return errTaskClosed
+	}
+	// The task extension moves a taken message to delivered/, so either place means it was sent.
+	inbox := filepath.Join(workspace.TaskState(folder, job.Task), "messages")
+	name := id + ".md"
+	_, queued := os.Stat(filepath.Join(inbox, name))
+	_, taken := os.Stat(filepath.Join(inbox, "delivered", name))
+	if queued != nil && taken != nil {
+		if err := os.MkdirAll(inbox, 0o700); err != nil {
 			return err
 		}
-		output, err := exec.Command(self, "task", "send", job.Project, job.Task, text).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(output)))
+		if err := workspace.AtomicWrite(filepath.Join(inbox, name), []byte(strings.TrimSpace(text)+"\n")); err != nil {
+			return err
 		}
+	}
+	if workspace.RunningTask(folder, job.Task) {
 		return nil
 	}
-	if id == "" {
-		var err error
-		if id, err = requests.NewID(); err != nil {
-			return err
-		}
+	self, err := os.Executable()
+	if err != nil {
+		return err
 	}
-	item := requests.Request{ID: id, From: job.Worker, To: job.Project, Text: text, Created: requests.Timestamp(),
-		Status: "new", InReplyTo: job.ID}
-	return requests.Store(reg, home, host, root, job.Project, id, item)
+	if output, err := exec.Command(self, "task", "restart", job.Project, job.Task).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: task %s: %v: %s", errNotStarted, job.Task, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
