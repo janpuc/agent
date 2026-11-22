@@ -370,34 +370,59 @@ func TestJobResultReachesItsTaskOnceAndAClosedTasksProject(t *testing.T) {
 	id := queue()
 	f.setWorker(map[string]any{})
 	f.ok(f.agent("job", "--drain"))
+	// Queued for the task but not taken yet: delivery stays pending.
 	job := f.job(id)
-	if job["status"] != "done" {
-		t.Fatalf("job %v", job)
+	if job["status"] != "delivering" || job["outcome"] != "done" {
+		t.Fatalf("job before the task takes it %v", job)
 	}
 	messages := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/messages")
 	name := job["delivery"].(string) + ".md"
 	if !strings.Contains(f.read(filepath.Join(messages, name)), "finished, exit 0") {
 		t.Fatalf("no result for the task in %s", messages)
 	}
-	// The task takes it, as its extension does, then a drain that died before recording the
-	// delivery delivers again. That makes no second copy.
+	f.ok(f.agent("job", "--drain"))
+	if entries, _ := os.ReadDir(messages); len(entries) != 1 {
+		t.Fatalf("a pending result was queued twice %v", entries)
+	}
+	// The task takes it, as its extension does. The next drain sees it and makes no second copy.
 	must(t, os.MkdirAll(filepath.Join(messages, "delivered"), 0o700))
 	must(t, os.Rename(filepath.Join(messages, name), filepath.Join(messages, "delivered", name)))
-	job["status"] = "delivering"
-	f.write(filepath.Join(f.home, ".local/state/agents/jobs", id, "job.json"), mustJSON(t, job))
 	f.ok(f.agent("job", "--drain"))
+	if job := f.job(id); job["status"] != "done" {
+		t.Fatalf("job after the task took it %v", job)
+	}
 	entries, err := os.ReadDir(messages)
 	must(t, err)
 	if len(entries) != 1 || entries[0].Name() != "delivered" {
-		t.Fatalf("task messages after a second delivery %v", entries)
+		t.Fatalf("task messages after delivery %v", entries)
 	}
 	if len(f.gardenInbox()) != 0 {
 		t.Fatal("a task's result went to the project too")
 	}
+	// A task that starts closing before it takes a result hands it to the project.
 	f.setWorker(map[string]any{"offline": true})
-	late := queue()
+	closing := queue()
+	f.setWorker(map[string]any{})
+	f.ok(f.agent("job", "--drain"))
 	metaPath := filepath.Join(f.workspace("garden"), ".agent/tasks/audit/meta.json")
 	meta := readJSON[map[string]any](t, metaPath)
+	meta["status"] = "closing"
+	f.write(metaPath, mustJSON(t, meta))
+	f.ok(f.agent("job", "--drain"))
+	if job := f.job(closing); job["status"] != "done" {
+		t.Fatalf("job of a closing task %v", job)
+	}
+	if items := f.gardenInbox(); len(items) != 1 || items[0]["inReplyTo"] != closing || !strings.Contains(items[0]["text"].(string), "Task audit was closed") {
+		t.Fatalf("project inbox %v", items)
+	}
+	for _, path := range []string{filepath.Join(f.workspace("garden"), ".agent/inbox")} {
+		for _, entry := range jsonFiles(t, path) {
+			must(t, os.Remove(filepath.Join(path, entry["id"].(string)+".json")))
+		}
+	}
+	f.setWorker(map[string]any{"offline": true})
+	late := queue()
+	meta = readJSON[map[string]any](t, metaPath)
 	meta["status"] = "closed"
 	f.write(metaPath, mustJSON(t, meta))
 	f.setWorker(map[string]any{})

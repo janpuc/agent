@@ -341,10 +341,11 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 				continue
 			case refused:
 				key := job.Project + "\x00" + job.Task + "\x00" + known.reason
-				if err := noteRefusal(reg, home, host, root, job, known.reason, noticed[key]); err != nil {
+				told, err := noteRefusal(reg, home, host, root, job, known.reason, noticed[key])
+				if err != nil {
 					return err
 				}
-				noticed[key] = true
+				noticed[key] = noticed[key] || told
 				continue
 			}
 			if job.Refusal != "" {
@@ -370,26 +371,27 @@ func Drain(reg *registry.Registry, home, host, root string) error {
 
 // noteRefusal tells the session that queued the job, once per reason, that its worker answers
 // but refuses jobs, so the agent can tell Jan. Jobs of the same session share one notice. The
-// reason is recorded only after the notice is written, so a failed notice is tried again.
-func noteRefusal(reg *registry.Registry, home, host, root string, job Job, reason string, alreadyTold bool) error {
+// reason is recorded only after the notice is written, so a failed notice is tried again. It
+// reports whether the session has the notice now.
+func noteRefusal(reg *registry.Registry, home, host, root string, job Job, reason string, alreadyTold bool) (bool, error) {
 	if job.Refusal == reason {
-		return nil
+		return false, nil
 	}
 	if !alreadyTold {
 		text := fmt.Sprintf("%s answers but refuses job %s: %s. This needs Jan or dotfiles, not a retry. The job stays queued and "+
 			"starts by itself once it is fixed. Tell Jan once, quoting the reason, and do not retry or build elsewhere.\n", job.Worker, job.ID, strings.TrimSuffix(reason, "."))
 		id, err := requests.NewID()
 		if err != nil {
-			return err
+			return false, err
 		}
-		// A queued notice for a task that did not start is told: it arrives when the task starts.
-		if err := notify(reg, home, host, root, job, text, id); err != nil && !errors.Is(err, errNotStarted) {
+		// A notice queued for a task counts: it arrives when the task takes its next message.
+		if err := notify(reg, home, host, root, job, text, id); err != nil && !errors.Is(err, errNotStarted) && !errors.Is(err, errPending) {
 			// Not recorded, so the next drain tries again. Nothing else waits on it.
-			return nil
+			return false, nil
 		}
 	}
 	job.Refusal = reason
-	return save(home, job)
+	return true, save(home, job)
 }
 
 // step runs the build or fetches its files, whichever the job needs next. It returns false when
@@ -642,6 +644,7 @@ func logTail(path string) string {
 // fails only on a record it cannot write.
 func deliver(reg *registry.Registry, home, host, root string, job Job) error {
 	if err := notify(reg, home, host, root, job, message(home, job), job.Delivery); err != nil {
+		// errPending: the task has it queued and has not taken it yet. The next drain looks again.
 		job.Undelivered = err.Error()
 		return save(home, job)
 	}
@@ -650,12 +653,13 @@ func deliver(reg *registry.Registry, home, host, root string, job Job) error {
 }
 
 var (
-	errTaskClosed = errors.New("the task is closed")
+	errTaskClosed = errors.New("the task is closing or closed")
 	errNotStarted = errors.New("the message is queued but the task did not start")
+	errPending    = errors.New("the message is queued and the task has not taken it yet")
 )
 
 // notify sends text to the session that queued the job, or to the project inbox when that task
-// was closed in the meantime.
+// began closing before it took the text.
 func notify(reg *registry.Registry, home, host, root string, job Job, text, id string) error {
 	err := send(reg, home, host, root, job, text, id)
 	if errors.Is(err, errTaskClosed) {
@@ -679,15 +683,17 @@ func send(reg *registry.Registry, home, host, root string, job Job, text, id str
 	if err != nil {
 		return err
 	}
-	if meta.Status == "closed" {
-		return errTaskClosed
-	}
-	// The task extension moves a taken message to delivered/, so either place means it was sent.
+	// The task extension moves a taken message to delivered/. Only that counts as delivered.
 	inbox := filepath.Join(workspace.TaskState(folder, job.Task), "messages")
 	name := id + ".md"
-	_, queued := os.Stat(filepath.Join(inbox, name))
-	_, taken := os.Stat(filepath.Join(inbox, "delivered", name))
-	if queued != nil && taken != nil {
+	if _, err := os.Stat(filepath.Join(inbox, "delivered", name)); err == nil {
+		return nil
+	}
+	// A closing task takes no more messages, so its result goes to the project instead.
+	if meta.Status != "open" {
+		return errTaskClosed
+	}
+	if _, err := os.Stat(filepath.Join(inbox, name)); err != nil {
 		if err := os.MkdirAll(inbox, 0o700); err != nil {
 			return err
 		}
@@ -696,7 +702,7 @@ func send(reg *registry.Registry, home, host, root string, job Job, text, id str
 		}
 	}
 	if workspace.RunningTask(folder, job.Task) {
-		return nil
+		return errPending
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -705,5 +711,5 @@ func send(reg *registry.Registry, home, host, root string, job Job, text, id str
 	if output, err := exec.Command(self, "task", "restart", job.Project, job.Task).CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: task %s: %v: %s", errNotStarted, job.Task, err, strings.TrimSpace(string(output)))
 	}
-	return nil
+	return errPending
 }
