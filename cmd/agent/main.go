@@ -22,6 +22,7 @@ import (
 	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/rex"
 	"github.com/janpuc/agent/internal/runner"
+	"github.com/janpuc/agent/internal/watch"
 	"github.com/janpuc/agent/internal/workspace"
 )
 
@@ -47,6 +48,7 @@ Jobs on workers, machines that are on only when Jan wants (a worker that is off 
 
 Overview
   todo                  Open questions from every STATE.md      agent todo
+  watch                 Start dead runners, continue stalled turns  agent watch --dry-run
   digest [hours]        Commits, pushes, merges, deploys, overrides  agent digest 48
 
 Tasks
@@ -207,6 +209,8 @@ func run(args []string) error {
 			return todo(home)
 		case "ls", "digest":
 			return overview(home, command)
+		case "watch":
+			return watchEntry(home, command)
 		}
 		if len(command) == 1 && workspace.ValidTicket(command[0]) {
 			return ticketEntry(home, command[0])
@@ -370,7 +374,7 @@ func isProjectEntry(args []string) bool {
 		return true
 	case "open":
 		return len(command) == 2
-	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace":
+	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace", "watch":
 		return false
 	}
 	return !strings.HasPrefix(command[0], "-")
@@ -535,6 +539,39 @@ func projectEntry(home string, args []string) error {
 	return hostWork.Ensure(command[0])
 }
 
+// watchEntry runs the one pass watchdog outside Rex. It prints what it does, and with --dry-run it
+// changes nothing.
+func watchEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	hostPath(home)
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	dryRun := false
+	switch {
+	case len(args) == 1:
+	case len(args) == 2 && args[1] == "--dry-run":
+		dryRun = true
+	default:
+		return errors.New("usage: agent watch [--dry-run]")
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	return watch.Once(project.Host{Registry: reg, Home: home, Name: host, Root: root}, dryRun, os.Stdout)
+}
+
 // registerEntry adds a member to an initialized workspace for the operator.
 func registerEntry(home string, args []string) error {
 	reg, err := registry.Load(home)
@@ -580,7 +617,7 @@ func onHost(reg *registry.Registry, host, name string) bool {
 var reservedNames = map[string]bool{
 	"up": true, "ls": true, "archive": true, "adopt": true, "ask": true, "reply": true,
 	"restart": true, "task": true, "open": true, "help": true, "todo": true, "digest": true,
-	"scratch": true,
+	"scratch": true, "watch": true,
 }
 
 // validateProjects refuses project names that shadow a command and broken lifecycles before a
