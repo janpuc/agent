@@ -15,6 +15,7 @@ import (
 
 	"github.com/janpuc/agent/internal/digest"
 	"github.com/janpuc/agent/internal/dispatch"
+	"github.com/janpuc/agent/internal/doctor"
 	"github.com/janpuc/agent/internal/jobs"
 	"github.com/janpuc/agent/internal/notes"
 	"github.com/janpuc/agent/internal/project"
@@ -53,6 +54,7 @@ Overview
   todo --all            Every STATE.md question and waiting job     agent todo --all
   watch                 Start dead runners, continue stalled turns  agent watch --dry-run
   digest [hours]        Commits, pushes, merges, deploys, overrides  agent digest 48
+  doctor [project]      Lint notes, recovery and the host             agent doctor
 
 Schedule, run by agent watch every 10 minutes
   schedule add <name> <project> <when> <text>  Ask a project on a timer  agent schedule add audit dotfiles "daily 09:00" "Check the alerts"
@@ -218,6 +220,8 @@ func run(args []string) error {
 			return todo(home, len(command) == 2)
 		case "ls", "digest":
 			return overview(home, command)
+		case "doctor":
+			return doctorEntry(home, command)
 		case "watch":
 			return watchEntry(home, command)
 		case "schedule":
@@ -391,7 +395,7 @@ func isProjectEntry(args []string) bool {
 		return true
 	case "open":
 		return len(command) == 2
-	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace", "watch", "schedule":
+	case "task", "help", "ls", "todo", "digest", "doctor", "ask", "reply", "namespace", "watch", "schedule":
 		return false
 	}
 	return !strings.HasPrefix(command[0], "-")
@@ -589,6 +593,38 @@ func watchEntry(home string, args []string) error {
 	return watch.Once(project.Host{Registry: reg, Home: home, Name: host, Root: root}, dryRun, os.Stdout)
 }
 
+// doctorEntry lints the active projects of this host read only: the notes contract, the mandatory
+// context size, recovery state, prose and the host's timers. It exits 1 when it finds a problem.
+func doctorEntry(home string, args []string) error {
+	reg, host, err := local(home)
+	if err != nil {
+		return err
+	}
+	only := ""
+	switch {
+	case len(args) == 1:
+	case len(args) == 2:
+		only = args[1]
+		if !onHost(reg, host, only) {
+			return fmt.Errorf("Unknown project: %s", only)
+		}
+	default:
+		return errors.New("usage: agent doctor [project]")
+	}
+	root, err := reg.Root(home, host)
+	if err != nil {
+		return err
+	}
+	problems, err := doctor.Run(project.Host{Registry: reg, Home: home, Name: host, Root: root}, only, os.Stdout)
+	if err != nil {
+		return err
+	}
+	if problems > 0 {
+		return exitStatus{1}
+	}
+	return nil
+}
+
 // scheduleEntry runs the schedule commands on this host: the timers agent watch delivers into a
 // project's inbox.
 func scheduleEntry(home string, args []string) error {
@@ -737,7 +773,7 @@ func onHost(reg *registry.Registry, host, name string) bool {
 var reservedNames = map[string]bool{
 	"up": true, "ls": true, "archive": true, "adopt": true, "ask": true, "reply": true,
 	"restart": true, "task": true, "open": true, "help": true, "todo": true, "digest": true,
-	"scratch": true, "watch": true, "schedule": true,
+	"scratch": true, "watch": true, "schedule": true, "doctor": true,
 }
 
 // validateProjects refuses project names that shadow a command and broken lifecycles before a

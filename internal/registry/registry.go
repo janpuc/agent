@@ -53,8 +53,11 @@ type Host struct {
 	MeminiScratch string `json:"meminiScratch"`
 	MeminiHome    string `json:"meminiHome"`
 	Guard         string `json:"guard"`
-	MaxAgents     *int   `json:"maxAgents"`
-	Providers     Policy `json:"providers"`
+	// Backup is the site's backup command, which also names its state directory under
+	// ~/.local/state. The doctor reads that directory's timestamps instead of running it.
+	Backup    string `json:"backup"`
+	MaxAgents *int   `json:"maxAgents"`
+	Providers Policy `json:"providers"`
 	// ScratchProject is the project that holds free-standing work on this host.
 	ScratchProject string `json:"scratchProject"`
 }
