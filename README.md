@@ -28,6 +28,44 @@ implementation; the suite also runs against the earlier Python runner while it i
   `scratchProject`. A scratch task folds into a project or asks the coordinator to register a new
   one, and its folder stays where it is.
 
+## What waits on you
+
+`agent todo` prints one line per item that waits on the operator, oldest first: its age, the
+project, the question on one line and, for a request, the chain that holds it.
+
+```
+7d   garden: Approve the release build (overdue, admin waits on garden, request 8102f4)
+2h   admin: Which key goes in 1Password (garden waits on alice, request 8102f4)
+```
+
+Its sources are the Pending approvals bullets of every active project's `notes/STATE.md`, aged
+by that file's modification time, open requests older than a day, and replies that answered
+`--needs-jan`. A request is open until a reply names it in `inReplyTo`, so an answered item stays
+out. `agent todo --all` prints the flat list of every question and waiting job instead.
+
+`agent reply <project> <id> <text> --needs-jan` answers a request that cannot finish without the
+operator, and keeps it in the list. Any other reply is `outcome: done` and closes the request.
+
+## Schedules
+
+```sh
+agent schedule add audit garden "daily 09:00" "Check the alerts"
+agent schedule add sweep admin "weekly mon 08:00" "Review last week's commits"
+agent schedule add poll garden "every 6h" "Check the queue"
+agent schedule ls
+agent schedule rm audit
+```
+
+A cadence is `daily HH:MM`, `weekly mon HH:MM` or `every Nh`, in Europe/Warsaw time. One JSON
+file per schedule lives in `~/.local/state/agents/schedules`, and a schedule runs on the host of
+its project. `agent watch`, which the host's timer already runs every ten minutes, delivers each
+due slot into the project's inbox as a request from `schedule`, once per slot, and records the
+slot in the schedule file. A slot missed while the machine was off runs once. A new schedule
+waits for its next slot. `agent watch --dry-run` prints what would run and writes nothing.
+
+The receiving agent answers with `agent reply` like any other request. An answer that needs the
+operator carries `--needs-jan` and appears in `agent todo`.
+
 ## Registry
 
 ```json
