@@ -63,8 +63,8 @@ func Run(reg *registry.Registry, home, client string, args []string) error {
 	} else if hosts, err = targets(reg, command); err != nil {
 		return err
 	}
-	printOutput := command[0] == "digest" ||
-		equal(command, "ls") || equal(command, "task", "ls") || equal(command, "todo")
+	printOutput := command[0] == "digest" || command[0] == "todo" ||
+		equal(command, "ls") || equal(command, "task", "ls")
 	for _, host := range hosts {
 		if _, ok := reg.Hosts[host]; !ok || !registry.ValidName(host) {
 			return fmt.Errorf("Unknown host: %s", host)
@@ -126,7 +126,7 @@ func targets(reg *registry.Registry, command []string) ([]string, error) {
 		return list[i] < list[j]
 	})
 	if equal(command, "ls") || equal(command, "up") || equal(command, "restart", "all") ||
-		equal(command, "task", "ls") || equal(command, "todo") || command[0] == "digest" {
+		equal(command, "task", "ls") || command[0] == "todo" || command[0] == "digest" {
 		return list, nil
 	}
 	index := 0

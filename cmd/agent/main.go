@@ -22,6 +22,7 @@ import (
 	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/rex"
 	"github.com/janpuc/agent/internal/runner"
+	"github.com/janpuc/agent/internal/schedule"
 	"github.com/janpuc/agent/internal/watch"
 	"github.com/janpuc/agent/internal/workspace"
 )
@@ -52,6 +53,12 @@ Overview
   todo --all            Every STATE.md question and waiting job     agent todo --all
   watch                 Start dead runners, continue stalled turns  agent watch --dry-run
   digest [hours]        Commits, pushes, merges, deploys, overrides  agent digest 48
+
+Schedule, run by agent watch every 10 minutes
+  schedule add <name> <project> <when> <text>  Ask a project on a timer  agent schedule add audit dotfiles "daily 09:00" "Check the alerts"
+  schedule ls           List schedules and the slot each last ran  agent schedule ls
+  schedule rm <name>    Delete a schedule                          agent schedule rm audit
+  <when> is daily HH:MM, weekly mon HH:MM or every Nh, in Europe/Warsaw time.
 
 Tasks
   task new [project] <TICKET|--slug slug> <brief>  Open a task      agent task new home --slug audit "Audit speakers"
@@ -213,6 +220,8 @@ func run(args []string) error {
 			return overview(home, command)
 		case "watch":
 			return watchEntry(home, command)
+		case "schedule":
+			return scheduleEntry(home, command)
 		}
 		if len(command) == 1 && workspace.ValidTicket(command[0]) {
 			return ticketEntry(home, command[0])
@@ -382,7 +391,7 @@ func isProjectEntry(args []string) bool {
 		return true
 	case "open":
 		return len(command) == 2
-	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace", "watch":
+	case "task", "help", "ls", "todo", "digest", "ask", "reply", "namespace", "watch", "schedule":
 		return false
 	}
 	return !strings.HasPrefix(command[0], "-")
@@ -580,6 +589,109 @@ func watchEntry(home string, args []string) error {
 	return watch.Once(project.Host{Registry: reg, Home: home, Name: host, Root: root}, dryRun, os.Stdout)
 }
 
+// scheduleEntry runs the schedule commands on this host: the timers agent watch delivers into a
+// project's inbox.
+func scheduleEntry(home string, args []string) error {
+	reg, err := registry.Load(home)
+	if err != nil {
+		return err
+	}
+	host, err := registry.HostName()
+	if err != nil {
+		return err
+	}
+	if _, ok := reg.Hosts[host]; !ok {
+		return fmt.Errorf("Host %s is not registered as an execution host", host)
+	}
+	if err := validateProjects(reg, home, host); err != nil {
+		return err
+	}
+	switch {
+	case len(args) == 2 && args[1] == "ls":
+		return listSchedules(home)
+	case len(args) == 3 && args[1] == "rm":
+		if !registry.ValidName(args[2]) {
+			return fmt.Errorf("Invalid schedule name: %s", args[2])
+		}
+		return schedule.Remove(home, args[2])
+	case len(args) >= 4 && args[1] == "add":
+		return addSchedule(reg, home, host, args[2], args[3], args[4:])
+	}
+	return errors.New("Usage: agent schedule add <name> <project> <when> <text>|ls|rm <name>")
+}
+
+// addSchedule stores one timer. The cadence may arrive as one quoted argument or as its words, so
+// a person who forgets the quotes still writes a schedule.
+func addSchedule(reg *registry.Registry, home, host, name, project string, words []string) error {
+	if !registry.ValidName(name) {
+		return fmt.Errorf("Invalid schedule name: %s", name)
+	}
+	if _, ok := reg.Projects[project]; !ok || reg.ProjectHost(project) != host {
+		return fmt.Errorf("A schedule runs where its project does, so %s must be a project of this host", project)
+	}
+	lifecycle, err := reg.Lifecycle(home, project)
+	if err != nil {
+		return err
+	}
+	if lifecycle != "active" {
+		return fmt.Errorf("%s: archived, not taking requests", project)
+	}
+	when, text, ok := splitWhen(words)
+	if !ok {
+		return errors.New("Invalid schedule time, write daily HH:MM, weekly mon HH:MM or every Nh")
+	}
+	if text == "" {
+		return errors.New("A schedule needs text")
+	}
+	if _, err := os.Stat(schedule.Path(home, name)); err == nil {
+		return fmt.Errorf("%s: schedule exists, remove it first", name)
+	}
+	err = schedule.Save(home, schedule.Schedule{Name: name, Project: project, When: when, Text: text,
+		Added: time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %s on %s\n", name, when, project)
+	return nil
+}
+
+// splitWhen takes the cadence off the front of words and returns the text after it. A weekly
+// cadence is three words, daily and every are two, and a quoted cadence is one.
+func splitWhen(words []string) (string, string, bool) {
+	for _, size := range []int{3, 2, 1} {
+		if size > len(words) {
+			continue
+		}
+		candidate := strings.Join(words[:size], " ")
+		if schedule.ValidWhen(candidate) {
+			return candidate, strings.Join(words[size:], " "), true
+		}
+	}
+	return "", "", false
+}
+
+// listSchedules prints one line per schedule, with the slot it last delivered for in Warsaw time.
+func listSchedules(home string) error {
+	schedules, err := schedule.Load(home)
+	if err != nil {
+		return err
+	}
+	if len(schedules) == 0 {
+		fmt.Println("No schedules")
+		return nil
+	}
+	for _, s := range schedules {
+		last := "never"
+		if stamp, err := time.Parse(time.RFC3339, s.LastRun); err == nil {
+			last = stamp.In(schedule.Warsaw).Format("2006-01-02 15:04")
+		} else if s.LastRun != "" {
+			last = s.LastRun
+		}
+		fmt.Printf("%s %s %s last=%s %s\n", s.Name, s.When, s.Project, last, shorten(s.Text, todoText))
+	}
+	return nil
+}
+
 // registerEntry adds a member to an initialized workspace for the operator.
 func registerEntry(home string, args []string) error {
 	reg, err := registry.Load(home)
@@ -625,7 +737,7 @@ func onHost(reg *registry.Registry, host, name string) bool {
 var reservedNames = map[string]bool{
 	"up": true, "ls": true, "archive": true, "adopt": true, "ask": true, "reply": true,
 	"restart": true, "task": true, "open": true, "help": true, "todo": true, "digest": true,
-	"scratch": true, "watch": true,
+	"scratch": true, "watch": true, "schedule": true,
 }
 
 // validateProjects refuses project names that shadow a command and broken lifecycles before a

@@ -31,16 +31,21 @@ const (
 	stallAge = 5 * time.Minute
 )
 
-// Once runs one pass over this host's active projects: it starts every dead runner and continues
-// every session whose last turn stalled. Archived projects are never touched. A project that
-// fails to start is logged and the pass goes on. It returns an error only when Rex is unreachable,
-// in which case nothing is started at all, or when its own records cannot be read or written.
+// Once runs one pass over this host's schedules, then over its active projects: it starts every
+// dead runner and continues every session whose last turn stalled. Archived projects are never
+// touched. A project that fails to start is logged and the pass goes on. It returns an error only
+// when Rex is unreachable, in which case nothing is started at all, or when its own records cannot
+// be read or written.
 func Once(h project.Host, dryRun bool, out io.Writer) error {
 	logger := &log{path: filepath.Join(registry.StateDir(h.Home), "watch.log"), out: out, dry: dryRun}
 	if !dryRun {
 		if err := os.MkdirAll(registry.StateDir(h.Home), 0o755); err != nil {
 			return err
 		}
+	}
+	// A schedule only writes an inbox file, so it runs whether or not Rex answers.
+	if err := runSchedules(h, logger, dryRun); err != nil {
+		return err
 	}
 	if _, err := rex.Sessions(); err != nil {
 		return logger.line("rex unreachable, starting nothing: %v", err)

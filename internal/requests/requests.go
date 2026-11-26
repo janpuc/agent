@@ -40,6 +40,10 @@ type Request struct {
 	Outcome   string `json:"outcome,omitempty"`
 }
 
+// ScheduleSender is the sender of a request that a schedule delivered, so a project's agent sees
+// that the timer asked, not another project or the operator.
+const ScheduleSender = "schedule"
+
 // Reply outcomes. A reply that carries neither is a plain answer; only a reply that asks the
 // operator for something keeps the request in the needs-Jan list.
 const (
@@ -385,9 +389,10 @@ func Reply(reg *registry.Registry, home, host, root, project, id, text, outcome 
 	if err != nil {
 		return err
 	}
-	// The operator has no laptop inbox. Their replies wait in the coordinator's ordinary inbox.
-	// Aliases map senders of requests sent before a project rename.
-	if target == operator {
+	// The operator has no laptop inbox. Their replies wait in the coordinator's ordinary inbox,
+	// and so does the answer to a scheduled request, as a timer has no inbox either. Aliases map
+	// senders of requests sent before a project rename.
+	if target == operator || target == ScheduleSender {
 		if target, err = reg.Coordinator(); err != nil {
 			return err
 		}
