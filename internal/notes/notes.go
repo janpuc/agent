@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // PendingApprovals returns the bullets under STATE.md's Pending approvals heading, with
@@ -27,4 +28,15 @@ func PendingApprovals(workspace string) []string {
 		}
 	}
 	return questions
+}
+
+// StateMtime is when the project's STATE.md was last written. A question has no timestamp of its
+// own, and a git log search for each bullet would cost a git process per line, so the file's
+// mtime dates every question in it.
+func StateMtime(workspace string) (time.Time, bool) {
+	info, err := os.Stat(filepath.Join(workspace, "notes/STATE.md"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
 }

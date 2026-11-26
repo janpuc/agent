@@ -48,7 +48,8 @@ Jobs on workers, machines that are on only when Jan wants (a worker that is off 
   job cancel <id>       Cancel a queued job                      agent job cancel <id>
 
 Overview
-  todo                  Open questions from every STATE.md      agent todo
+  todo                  What waits on the operator, oldest first   agent todo
+  todo --all            Every STATE.md question and waiting job     agent todo --all
   watch                 Start dead runners, continue stalled turns  agent watch --dry-run
   digest [hours]        Commits, pushes, merges, deploys, overrides  agent digest 48
 
@@ -204,10 +205,10 @@ func run(args []string) error {
 		case "ask", "reply":
 			return requestEntry(home, command, false)
 		case "todo":
-			if len(command) != 1 {
-				return errors.New("usage: agent todo")
+			if len(command) > 2 || len(command) == 2 && command[1] != "--all" {
+				return errors.New("usage: agent todo [--all]")
 			}
-			return todo(home)
+			return todo(home, len(command) == 2)
 		case "ls", "digest":
 			return overview(home, command)
 		case "watch":
@@ -344,14 +345,14 @@ func requestEntry(home string, args []string, clientOperator bool) error {
 		}
 		return requests.Ask(reg, home, host, root, args[1], strings.Join(args[2:], " "), clientOperator)
 	}
+	if len(args) < 4 {
+		return errors.New("Usage: agent reply <project> <id> <text> [--needs-jan]")
+	}
 	// --needs-jan marks a reply that cannot complete without the operator. It is the last word,
 	// so it is never part of the text it follows.
 	words, outcome := args[3:], requests.OutcomeDone
 	if len(words) > 0 && words[len(words)-1] == "--needs-jan" {
 		words, outcome = words[:len(words)-1], requests.OutcomeNeedsJan
-	}
-	if len(args) < 4 {
-		return errors.New("Usage: agent reply <project> <id> <text> [--needs-jan]")
 	}
 	project := args[1]
 	if _, ok := reg.Projects[project]; !ok || reg.ProjectHost(project) != host {
@@ -664,8 +665,10 @@ func local(home string) (*registry.Registry, string, error) {
 	return reg, host, nil
 }
 
-// todo prints the open questions for the operator from every active project's STATE.md.
-func todo(home string) error {
+// todo prints the needs-Jan list: every question in a project's STATE.md, unanswered requests
+// past their day and replies that asked for the operator, oldest first. With --all it prints the
+// flat list of questions and waiting jobs instead.
+func todo(home string, all bool) error {
 	reg, host, err := local(home)
 	if err != nil {
 		return err
@@ -674,22 +677,115 @@ func todo(home string) error {
 	if err != nil {
 		return err
 	}
+	operator, err := reg.Operator()
+	if err != nil {
+		return err
+	}
+	var names []string
 	for _, name := range reg.Names(host) {
 		lifecycle, err := reg.Lifecycle(home, name)
 		if err != nil {
 			return err
 		}
-		if lifecycle != "active" {
+		if lifecycle == "active" {
+			names = append(names, name)
+		}
+	}
+	if all {
+		for _, name := range names {
+			for _, question := range notes.PendingApprovals(filepath.Join(root, name)) {
+				fmt.Printf("%s: %s\n", name, question)
+			}
+		}
+		for _, line := range jobs.Waiting(home) {
+			fmt.Printf("jobs: %s\n", line)
+		}
+		return nil
+	}
+	now := time.Now()
+	var items []todoItem
+	for _, name := range names {
+		// STATE.md dates every question in it, as notes.StateMtime explains.
+		written, ok := notes.StateMtime(filepath.Join(root, name))
+		if !ok {
 			continue
 		}
 		for _, question := range notes.PendingApprovals(filepath.Join(root, name)) {
-			fmt.Printf("%s: %s\n", name, question)
+			items = append(items, todoItem{created: written, project: name, text: question})
 		}
 	}
-	for _, line := range jobs.Waiting(home) {
-		fmt.Printf("jobs: %s\n", line)
+	for _, waiting := range requests.Outstanding(root, names, operator, now) {
+		items = append(items, todoItem{created: waiting.Created, project: waiting.Project,
+			text: waiting.Text, chain: waiting.Chain, request: waiting.Request, overdue: waiting.Overdue})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		if !a.created.Equal(b.created) {
+			return a.created.Before(b.created)
+		}
+		if a.project != b.project {
+			return a.project < b.project
+		}
+		return a.text < b.text
+	})
+	for _, item := range items {
+		line := fmt.Sprintf("%-4s %s: %s", age(now, item.created), item.project, shorten(item.text, todoText))
+		var marks []string
+		if item.overdue {
+			marks = append(marks, "overdue")
+		}
+		if item.chain != "" {
+			marks = append(marks, item.chain, "request "+item.request)
+		}
+		if len(marks) > 0 {
+			line += " (" + strings.Join(marks, ", ") + ")"
+		}
+		fmt.Println(line)
 	}
 	return nil
+}
+
+// todoItem is one line of the needs-Jan list. chain, request and overdue are set for an item that
+// came from an inbox record.
+type todoItem struct {
+	created time.Time
+	project string
+	text    string
+	chain   string
+	request string
+	overdue bool
+}
+
+// todoText is how much of an item's text one line carries, so the line still fits a phone.
+const todoText = 80
+
+// age dates an item in minutes, hours or days, whichever keeps it short.
+func age(now, created time.Time) string {
+	since := now.Sub(created)
+	switch {
+	case since < 0:
+		return "0m"
+	case since < time.Hour:
+		return fmt.Sprintf("%dm", int(since.Minutes()))
+	case since < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(since.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(since.Hours()/24))
+}
+
+// shorten folds text to one line and cuts it at a word boundary near limit, so a long question
+// still reads as a sentence on a phone.
+func shorten(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len([]rune(text)) <= limit {
+		return text
+	}
+	runes := []rune(text)
+	cut := string(runes[:limit])
+	if index := strings.LastIndex(cut, " "); index > limit/2 {
+		return cut[:index]
+	}
+	return cut
 }
 
 // overview runs ls and digest, which report on this host's projects.

@@ -82,7 +82,7 @@ func TestJobWaitsForAnOfflineWorkerAndDeliversItsResult(t *testing.T) {
 	if out := f.ok(f.agent("job", "ls")).stdout; !strings.Contains(out, id+" lab-mac status=queued garden app@") {
 		t.Fatalf("job ls\n%s", out)
 	}
-	if out := f.ok(f.agent("todo")).stdout; !strings.Contains(out, "jobs: job "+id+" for garden waits for lab-mac to be switched on") {
+	if out := f.ok(f.agent("todo", "--all")).stdout; !strings.Contains(out, "jobs: job "+id+" for garden waits for lab-mac to be switched on") {
 		t.Fatalf("todo\n%s", out)
 	}
 	// Draining while the worker is off changes nothing and delivers nothing.
@@ -120,7 +120,7 @@ func TestJobWaitsForAnOfflineWorkerAndDeliversItsResult(t *testing.T) {
 	if len(f.gardenInbox()) != 1 {
 		t.Fatal("a finished job was delivered twice")
 	}
-	if out := f.ok(f.agent("todo")).stdout; strings.Contains(out, "jobs:") {
+	if out := f.ok(f.agent("todo", "--all")).stdout; strings.Contains(out, "jobs:") {
 		t.Fatalf("a finished job still waits in todo\n%s", out)
 	}
 	// A second job builds in the same checkout, which the worker created and keeps.
@@ -190,7 +190,7 @@ func TestJobOnAWorkerThatRefusesIsReportedOnceAndWaits(t *testing.T) {
 	if job := f.job(id); job["status"] != "queued" {
 		t.Fatalf("a refused job must wait %v", job)
 	}
-	if out := f.ok(f.agent("todo")).stdout; !strings.Contains(out, "lab-mac refuses jobs: Host key verification failed.") {
+	if out := f.ok(f.agent("todo", "--all")).stdout; !strings.Contains(out, "lab-mac refuses jobs: Host key verification failed.") {
 		t.Fatalf("todo\n%s", out)
 	}
 	f.setWorker(map[string]any{})

@@ -267,7 +267,7 @@ func TestTodoListsPendingApprovals(t *testing.T) {
 	garden := f.open("garden")
 	f.write(filepath.Join(garden, "notes/STATE.md"), "# State\n\n## Current work\n\n- not a question\n\n"+
 		"## Pending approvals\n\n- Buy seeds. Recommend yes.\n  Approver: alice.\n- Second\n\n## Next actions\n\n- later\n")
-	out := f.ok(f.agent("todo")).stdout
+	out := f.ok(f.agent("todo", "--all")).stdout
 	if out != "garden: Buy seeds. Recommend yes. Approver: alice.\ngarden: Second\n" {
 		t.Fatalf("todo output %q", out)
 	}
