@@ -21,6 +21,9 @@ implementation; the suite also runs against the earlier Python runner while it i
   A remote host reaches the hub through a restricted SSH forced command.
 - Tasks: `agent task new` opens a task folder and a tab next to the project. Closing never
   deletes data.
+- Watchdog: `agent watch` is the one pass the host's timer runs, outside Rex, so a Rex restart
+  never takes it down. It starts a project whose runner died and continues a session whose last
+  turn ended on a provider stall.
 - Scratch: `agent scratch` keeps free-standing work as tasks of the project each host names in
   `scratchProject`. A scratch task folds into a project or asks the coordinator to register a new
   one, and its folder stays where it is.
