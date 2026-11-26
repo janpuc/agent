@@ -89,9 +89,9 @@ func TestBudgetProblemsWarnsAtNinetyPercent(t *testing.T) {
 	page(t, ws, "notes/STATE.md", strings.Repeat("s", 100))
 	pages := sectionBytes("notes/PROJECT.md", 100) + sectionBytes("notes/STATE.md", 100)
 	for _, tc := range []struct {
-		name      string
-		total     int64
-		lines     []string
+		name  string
+		total int64
+		lines []string
 	}{
 		{name: "under", total: 800},
 		{name: "at ninety percent", total: 900,
