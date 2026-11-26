@@ -526,28 +526,13 @@ func projectEntry(home string, args []string) error {
 	if len(command) != 1 {
 		return errors.New("Usage: agent <project>|up|ls|archive <project>|adopt <project>|restart <project>|all")
 	}
-	names := []string{command[0]}
 	if command[0] == "up" {
-		names = nil
-		for _, name := range reg.Names(host) {
-			lifecycle, err := reg.Lifecycle(home, name)
-			if err != nil {
-				return err
-			}
-			if lifecycle == "active" {
-				names = append(names, name)
-			}
-		}
+		return hostWork.Up()
 	}
-	for _, name := range names {
-		if !onHost(reg, host, name) {
-			return fmt.Errorf("Unknown project: %s", name)
-		}
-		if err := hostWork.Ensure(name); err != nil {
-			return err
-		}
+	if !onHost(reg, host, command[0]) {
+		return fmt.Errorf("Unknown project: %s", command[0])
 	}
-	return nil
+	return hostWork.Ensure(command[0])
 }
 
 // registerEntry adds a member to an initialized workspace for the operator.

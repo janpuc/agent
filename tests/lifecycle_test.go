@@ -133,6 +133,32 @@ func TestUpOpensEveryActiveProject(t *testing.T) {
 	f.fails(f.agent("up", "extra"), "Usage")
 }
 
+func TestUpReachesEveryProjectAfterOneFails(t *testing.T) {
+	f := newFixture(t, "hub")
+	// Two sessions labelled admin make its launch refuse, so up meets a failure first.
+	state := loadRexAt(f)
+	state.Sessions = []*rexSession{
+		{ID: "session:a", Label: "admin", Windows: []*rexWindow{}},
+		{ID: "session:b", Label: "admin", Windows: []*rexWindow{}},
+	}
+	state.Next = 10
+	state.saveAt(f)
+	r := f.agent("up")
+	if r.code == 0 {
+		t.Fatalf("up succeeded while admin failed\n%s", r)
+	}
+	if !strings.Contains(r.stderr, "multiple rex resources labelled admin") {
+		t.Fatalf("stderr lacks the failure\n%s", r)
+	}
+	if !strings.Contains(r.stderr, "up failed for admin") {
+		t.Fatalf("stderr lacks the summary\n%s", r)
+	}
+	// The project after the failing one is still opened, so one failure loses nothing.
+	if !f.exists(filepath.Join(f.workspace("garden"), "notes/PROJECT.md")) {
+		t.Fatal("up skipped garden after admin failed")
+	}
+}
+
 func TestLaunchPrefixedDispatchMatchesBareCommands(t *testing.T) {
 	f := newFixture(t, "hub")
 	f.ok(f.internal("--launch", "garden"))

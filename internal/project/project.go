@@ -154,6 +154,33 @@ func (h Host) Ensure(name string) error {
 	return h.selectSession(name, sid, windowID)
 }
 
+// Up opens every active project on this host. A project that fails never hides the ones after it,
+// so the failures are collected, reported at the end and returned only after every project was
+// tried.
+func (h Host) Up() error {
+	var failed []string
+	for _, name := range h.Registry.Names(h.Name) {
+		lifecycle, err := h.Registry.Lifecycle(h.Home, name)
+		if err != nil {
+			return err
+		}
+		if lifecycle != "active" {
+			continue
+		}
+		if err := h.Ensure(name); err != nil {
+			if !strings.HasPrefix(err.Error(), name+":") {
+				err = fmt.Errorf("%s: %w", name, err)
+			}
+			fmt.Fprintf(os.Stderr, "agent up: %v\n", err)
+			failed = append(failed, name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("up failed for %s", strings.Join(failed, ", "))
+	}
+	return nil
+}
+
 // runnerCommand is the launch every pi tab uses.
 func runnerCommand(home, name string) []string {
 	script := "exec " + shellQuote(filepath.Join(home, ".local/bin/agent")) + " --run " + shellQuote(name)
