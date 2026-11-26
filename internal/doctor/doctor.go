@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -256,13 +257,20 @@ func loadMandatory(home string) mandatory {
 			result.problems = append(result.problems, "standards/"+file.Path+": missing")
 			continue
 		}
-		result.bytes += int64(len(data))
+		result.bytes += sectionBytes("Standard: "+file.Path, len(data))
 		sum := sha256.Sum256(data)
 		if !strings.EqualFold(hex.EncodeToString(sum[:]), file.SHA256) {
 			result.problems = append(result.problems, "standards/"+file.Path+": sha256 differs from the manifest")
 		}
 	}
 	return result
+}
+
+// sectionBytes is what the loader (project-context.ts) counts for one file: its text plus the
+// heading and digest line it puts above it and the blank line between sections.
+func sectionBytes(title string, size int) int64 {
+	header := "## " + title + "\n\nsha256 " + strings.Repeat("0", 64) + ", " + strconv.Itoa(size) + " bytes.\n\n"
+	return int64(len(header) + size + 2)
 }
 
 // budgetProblems checks what one project costs the loader: the standards, its PROJECT.md and its
@@ -274,7 +282,7 @@ func (m mandatory) budgetProblems(ws string) []string {
 	total := m.bytes
 	for _, rel := range []string{"notes/PROJECT.md", "notes/STATE.md"} {
 		if info, err := os.Stat(filepath.Join(ws, rel)); err == nil {
-			total += info.Size()
+			total += sectionBytes(rel, int(info.Size()))
 		}
 	}
 	percent := total * 100 / m.budget

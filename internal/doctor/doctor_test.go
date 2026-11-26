@@ -81,26 +81,28 @@ func TestPageProblemsWantsOneTitle(t *testing.T) {
 
 // TestBudgetProblemsWarnsAtNinetyPercent covers check three: the standards, PROJECT.md and
 // STATE.md share one budget, which warns at ninety percent and only fails above it. The two pages
-// of the workspace below are 200 bytes, so the standards bytes decide the total.
+// of the workspace below are 100 bytes each, with the loader's section headers on top, so the
+// standards bytes are chosen to reach each total.
 func TestBudgetProblemsWarnsAtNinetyPercent(t *testing.T) {
 	ws := t.TempDir()
 	page(t, ws, "notes/PROJECT.md", strings.Repeat("p", 100))
 	page(t, ws, "notes/STATE.md", strings.Repeat("s", 100))
+	pages := sectionBytes("notes/PROJECT.md", 100) + sectionBytes("notes/STATE.md", 100)
 	for _, tc := range []struct {
 		name      string
-		standards int64
+		total     int64
 		lines     []string
 	}{
-		{name: "under", standards: 600},
-		{name: "at ninety percent", standards: 700,
+		{name: "under", total: 800},
+		{name: "at ninety percent", total: 900,
 			lines: []string{"context 900 of 1000 bytes, 90%, near the budget"}},
-		{name: "at the budget", standards: 800,
+		{name: "at the budget", total: 1000,
 			lines: []string{"context 1000 of 1000 bytes, 100%, near the budget"}},
-		{name: "over", standards: 850,
+		{name: "over", total: 1050,
 			lines: []string{"context 1050 of 1000 bytes, 105%, over budget"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mandatory{bytes: tc.standards, budget: 1000}.budgetProblems(ws)
+			got := mandatory{bytes: tc.total - pages + 0, budget: 1000}.budgetProblems(ws)
 			if strings.Join(got, "|") != strings.Join(tc.lines, "|") {
 				t.Fatalf("problems %q, want %q", got, tc.lines)
 			}
@@ -127,7 +129,7 @@ func TestLoadContextChecksTheStandardsHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 	mandatory := loadMandatory(home)
-	if mandatory.budget != 49152 || mandatory.bytes != int64(len(text)) {
+	if mandatory.budget != 49152 || mandatory.bytes != sectionBytes("Standard: knowledge.md", len(text)) {
 		t.Fatalf("mandatory %+v", mandatory)
 	}
 	if strings.Join(mandatory.problems, "|") != "standards/gone.md: missing" {
