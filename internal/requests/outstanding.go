@@ -80,6 +80,8 @@ func Outstanding(root string, projects []string, operator string, now time.Time)
 		}
 		switch {
 		case item.InReplyTo == "" && item.Kind == "" && item.From != operator &&
+			// Replies to work travel by the remote inbox, so they never show up here and would look open forever.
+			item.From != "work" &&
 			(item.Status == "new" || item.Status == "accepted") && !answered[item.ID]:
 			if now.Sub(created) <= OverdueAge {
 				continue
