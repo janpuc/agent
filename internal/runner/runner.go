@@ -101,8 +101,6 @@ func Loop(h Host, name, task string) (int, error) {
 		if task != "" {
 			session = name + "-task-" + task
 		}
-		sessionDir := filepath.Join(h.Home, ".pi/agent/sessions",
-			"--"+cwdEscape.ReplaceAllString(strings.TrimLeft(cwd, `/\`), "-")+"--")
 		handoff := filepath.Join(state, "handoff-"+strconv.Itoa(generation)+".md")
 		model, thinking := projectModel(h, name)
 		if task != "" {
@@ -121,11 +119,11 @@ func Loop(h Host, name, task string) (int, error) {
 			"--model", model + ":" + thinking,
 		}
 		// Match file names inside the literal directory, so brackets in a path are not a pattern.
-		exists, err := sessionExists(sessionDir, session)
+		existing, err := SessionFile(SessionDir(h.Home, cwd), session)
 		if err != nil {
 			return 0, err
 		}
-		if !exists {
+		if existing == "" {
 			if task != "" && workspace.Exists(filepath.Join(state, "wait-for-brief")) {
 				// Opened with --wait: the operator pastes the brief as the first message.
 			} else if task != "" {
@@ -549,19 +547,26 @@ func environmentList(values map[string]string) []string {
 	return entries
 }
 
-// sessionExists reports whether Pi already has a session file named *_<session>.jsonl in dir.
-func sessionExists(dir, session string) (bool, error) {
+// SessionDir is the directory Pi keeps the sessions of runs started in cwd. Pi replaces the
+// punctuation of the path with a dash.
+func SessionDir(home, cwd string) string {
+	return filepath.Join(home, ".pi/agent/sessions",
+		"--"+cwdEscape.ReplaceAllString(strings.TrimLeft(cwd, `/\`), "-")+"--")
+}
+
+// SessionFile is the file of the session named session in dir, empty when Pi has no such session.
+func SessionFile(dir, session string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), "_"+session+".jsonl") {
-			return true, nil
+			return filepath.Join(dir, entry.Name()), nil
 		}
 	}
-	return false, nil
+	return "", nil
 }
