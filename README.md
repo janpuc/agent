@@ -46,6 +46,21 @@ out. `agent todo --all` prints the flat list of every question and waiting job i
 `agent reply <project> <id> <text> --needs-jan` answers a request that cannot finish without the
 operator, and keeps it in the list. Any other reply is `outcome: done` and closes the request.
 
+## Doctor
+
+```sh
+agent doctor              # lint every active project on this host
+agent doctor home         # lint one project
+```
+
+One read-only pass over what a script can decide and what breaks recovery: the level-two headings
+of `notes/PROJECT.md`, `notes/STATE.md` and every topic page, the knowledge index links, the
+mandatory context budget in `~/.config/agents/standards/manifest.json` along with its file hashes,
+the `.agent` state and local-only member directories that Git cannot restore, em and en dashes or
+ellipses in `notes/*.md`, and the watchdog and jobs timers. It prints one block per project that
+has problems, prints `ok` when nothing is wrong, and exits 1 when it found one. It never writes and
+never fixes anything.
+
 ## Schedules
 
 ```sh
