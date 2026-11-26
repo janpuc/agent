@@ -37,7 +37,15 @@ type Request struct {
 	Created   string `json:"created"`
 	Status    string `json:"status"`
 	InReplyTo string `json:"inReplyTo,omitempty"`
+	Outcome   string `json:"outcome,omitempty"`
 }
+
+// Reply outcomes. A reply that carries neither is a plain answer; only a reply that asks the
+// operator for something keeps the request in the needs-Jan list.
+const (
+	OutcomeDone     = "done"
+	OutcomeNeedsJan = "needs-jan"
+)
 
 // NewID is a new request id: the UTC time and six random hex digits.
 func NewID() (string, error) {
@@ -351,8 +359,12 @@ func Ask(reg *registry.Registry, home, host, root, target, text string, clientOp
 	return nil
 }
 
-// Reply answers an inbox request from the project that received it.
-func Reply(reg *registry.Registry, home, host, root, project, id, text string) error {
+// Reply answers an inbox request from the project that received it. outcome is OutcomeDone for a
+// plain answer or OutcomeNeedsJan when the answer cannot complete without the operator.
+func Reply(reg *registry.Registry, home, host, root, project, id, text, outcome string) error {
+	if outcome != OutcomeDone && outcome != OutcomeNeedsJan {
+		return fmt.Errorf("Invalid reply outcome: %s", outcome)
+	}
 	if err := Target(reg, home, project); err != nil {
 		return err
 	}
@@ -395,7 +407,7 @@ func Reply(reg *registry.Registry, home, host, root, project, id, text string) e
 		return err
 	}
 	item := Request{ID: newID, From: project, To: target, Text: text, Created: Timestamp(),
-		Status: "new", InReplyTo: id}
+		Status: "new", InReplyTo: id, Outcome: outcome}
 	payload, err := encode(item, false, true)
 	if err != nil {
 		return err

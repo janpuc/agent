@@ -40,6 +40,7 @@ Projects
 Requests
   ask <project> <text>   Ask the system's owner                   agent ask dotfiles "Update the standards"
   reply <project> <id> <text>  Reply from the receiving project    agent reply home <id> "Verified"
+  reply <project> <id> <text> --needs-jan  Ask the operator          agent reply kubernetes <id> "Needs a key" --needs-jan
 
 Jobs on workers, machines that are on only when Jan wants (a worker that is off is normal: the job waits)
   job run <worker> <repo> [--commit <rev>] [--fetch <path>]... -- ./<script> [args]  agent job run hermes caption-slate --fetch build -- ./scripts/build.sh
@@ -343,14 +344,20 @@ func requestEntry(home string, args []string, clientOperator bool) error {
 		}
 		return requests.Ask(reg, home, host, root, args[1], strings.Join(args[2:], " "), clientOperator)
 	}
+	// --needs-jan marks a reply that cannot complete without the operator. It is the last word,
+	// so it is never part of the text it follows.
+	words, outcome := args[3:], requests.OutcomeDone
+	if len(words) > 0 && words[len(words)-1] == "--needs-jan" {
+		words, outcome = words[:len(words)-1], requests.OutcomeNeedsJan
+	}
 	if len(args) < 4 {
-		return errors.New("Usage: agent reply <project> <id> <text>")
+		return errors.New("Usage: agent reply <project> <id> <text> [--needs-jan]")
 	}
 	project := args[1]
 	if _, ok := reg.Projects[project]; !ok || reg.ProjectHost(project) != host {
 		return errors.New("Replies must originate on this project's host")
 	}
-	return requests.Reply(reg, home, host, root, project, args[2], strings.Join(args[3:], " "))
+	return requests.Reply(reg, home, host, root, project, args[2], strings.Join(words, " "), outcome)
 }
 
 // projectCommand strips one --launch prefix from the arguments of a workspace command. The
