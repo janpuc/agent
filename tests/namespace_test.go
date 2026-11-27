@@ -7,9 +7,6 @@ import (
 )
 
 func TestNamespaceNeverDerivesAnUnregisteredName(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("the Python runner has no namespace command")
-	}
 	cases := []struct{ host, dir, want string }{
 		{"hub", "Projects/garden", "lab/garden"},
 		{"hub", "Projects/garden/tasks/audit", "lab/garden"},

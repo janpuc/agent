@@ -8,9 +8,6 @@ import (
 
 // A bare ticket id opens its task with --wait in the tickets project, then brings it up again.
 func TestBareTicketOpensThenShowsItsTask(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.fails(f.agent("HA-125"), "no project here takes tickets")
 	f.registry["platform"].(map[string]any)["tickets"] = "garden"
@@ -53,9 +50,6 @@ func TestBareTicketOpensThenShowsItsTask(t *testing.T) {
 
 // From a client a bare ticket goes to the host of the tickets project.
 func TestClientSendsBareTicketToTheTicketsHost(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "laptop")
 	f.registry["platform"].(map[string]any)["tickets"] = "field"
 	f.saveRegistry()

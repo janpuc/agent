@@ -9,9 +9,6 @@ import (
 // --wait opens a task without a brief and starts Pi without the first prompt, so the operator can paste
 // the brief into the tab.
 func TestTaskNewWaitStartsPiWithoutFirstPrompt(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.fails(f.agent("task", "new", "garden", "--slug", "audit", " "), "--wait")
 	f.ok(f.agent("task", "new", "garden", "--wait", "--slug", "audit"))
@@ -43,9 +40,6 @@ func TestTaskNewWaitStartsPiWithoutFirstPrompt(t *testing.T) {
 
 // Rex cannot say which app the operator is looking at, so a new task tab is shown in every connected app.
 func TestTaskNewShowsTheTabInEveryConnectedApp(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.open("garden")
 	state := loadRexAt(f)

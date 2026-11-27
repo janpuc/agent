@@ -113,7 +113,7 @@ The suite needs Go and Git. Every other tool it meets (Rex, Pi, mise, ssh, chezm
 
 ```sh
 go test ./tests                                              # builds ./cmd/agent
-AGENT_IMPL=python AGENT_BIN=/path/to/agent-run go test -count=1 ./tests
+AGENT_BIN=/path/to/agent go test -count=1 ./tests            # a prebuilt command
 ```
 
 ## License

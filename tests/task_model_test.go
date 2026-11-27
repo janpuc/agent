@@ -7,9 +7,6 @@ import (
 
 // --model runs one task on another model than its project, the project itself keeps its own.
 func TestTaskNewModelOverridesTheProjectModel(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.ok(f.agent("task", "new", "garden", "--model", "other/model-x:low", "--slug", "trial", "Try the other model"))
 	f.ok(f.internal("--task-run", "garden", "trial"))

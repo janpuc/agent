@@ -12,9 +12,6 @@ import (
 // command. The suite still runs them against the Go command.
 func skipWithoutScratch(t *testing.T) {
 	t.Helper()
-	if implementation.kind == "python" {
-		t.Skip("the Python runner has no scratch command")
-	}
 }
 
 // scratchID is the task id in a scratch new "opened" line.

@@ -10,9 +10,6 @@ import (
 // A coordinator hands a task a message through its state folder, never its terminal, and a closed
 // task gets none.
 func TestTaskSendQueuesAMessageForTheSession(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
 	f.ok(f.with("PI_PROJECT=garden").agent("task", "send", "audit", "Check", "the bridge too"))
@@ -40,9 +37,6 @@ func TestTaskSendQueuesAMessageForTheSession(t *testing.T) {
 
 // A steering message waits in its own folder, so the extension can hand it to a busy turn.
 func TestTaskSendSteerQueuesForTheBusyTurn(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	f.ok(f.agent("task", "new", "garden", "--slug", "audit", "Audit the speakers"))
 	f.ok(f.agent("task", "send", "--steer", "garden", "audit", "Stop,", "wrong file"))

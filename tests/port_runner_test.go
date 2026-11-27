@@ -144,9 +144,6 @@ func TestClosedTaskLoopEndsWithoutStartingPi(t *testing.T) {
 func TestClientDispatchCommandLines(t *testing.T) {
 	f := newFixture(t, "laptop")
 	program, operator := "agent", "--client-operator"
-	if implementation.kind == "python" {
-		program, operator = "python3 .local/bin/agent-run", "--client-jan"
-	}
 	f.ok(f.internal("--launch", "ls"))
 	f.ok(f.internal("--launch", "ask", "garden", "Please", "check"))
 	f.ok(f.with("PI_PROJECT=garden").internal("--launch", "task", "new", "--slug", "audit", "Audit"))
@@ -205,9 +202,6 @@ func TestHelpIsPrintedOnStdout(t *testing.T) {
 // TestUsageErrorsPrintOnlyTheirUsageLine checks that a wrong command prints its Usage line and a
 // pointer to the guide, not the whole grouped guide.
 func TestUsageErrorsPrintOnlyTheirUsageLine(t *testing.T) {
-	if implementation.kind != "go" {
-		t.Skip("the Python runner still appends the guide to a usage error")
-	}
 	f := newFixture(t, "hub")
 	for _, args := range [][]string{{"reply"}, {"ask"}, {"todo", "extra"}, {"--launch", "open"}} {
 		r := f.exec(args...)
@@ -260,7 +254,7 @@ func TestRunnerRefusesANullSecret(t *testing.T) {
 	if r.code == 0 || len(f.calls("pi")) != 0 {
 		t.Fatalf("Pi started with a null secret\n%s", r)
 	}
-	if implementation.kind != "python" && !strings.Contains(r.stderr, "Invalid secret value for HA_TOKEN") {
+	if !strings.Contains(r.stderr, "Invalid secret value for HA_TOKEN") {
 		t.Fatalf("stderr %s", r.stderr)
 	}
 }

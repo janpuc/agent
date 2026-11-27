@@ -13,9 +13,6 @@ import (
 // script, and a worker lab-mac with its own home behind the ssh stub.
 func jobFixture(t *testing.T, script string) (*fixture, string) {
 	t.Helper()
-	if implementation.kind == "python" {
-		t.Skip("jobs exist only in the Go agent")
-	}
 	f := newFixture(t, "hub")
 	f.registry["platform"].(map[string]any)["workers"] = []any{"lab-mac"}
 	f.saveRegistry()
@@ -243,9 +240,6 @@ func TestJobCancelAndRefusals(t *testing.T) {
 }
 
 func TestWorkerEndpointAcceptsOnlyItsOperations(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("jobs exist only in the Go agent")
-	}
 	f := newFixture(t, "laptop")
 	for _, operation := range []string{"", "bash", "ping; id", "work-cleanup", "work-cleanup --really", "work-cleanup --really abc",
 		"work-cleanup --really " + strings.Repeat("a", 64) + " x", "agent ls"} {

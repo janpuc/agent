@@ -10,9 +10,6 @@ import (
 // The Rex server resolves a tab command with its own PATH, which on macOS lacks Homebrew, so
 // project and task tabs must name fish by the absolute path the agent found on its own PATH.
 func TestTabsLaunchFishByAbsolutePath(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("Go runner only")
-	}
 	f := newFixture(t, "hub")
 	fish := filepath.Join(f.dir, "bin", "fish")
 	must(t, os.WriteFile(fish, []byte("#!/bin/sh\nexit 0\n"), 0o755))

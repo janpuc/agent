@@ -296,9 +296,6 @@ func TestRemoteProjectDeliversAndFetchesOverSSH(t *testing.T) {
 
 // A shell inside a workspace asks as that project, a shell anywhere else has no sender.
 func TestAskInfersTheSenderFromTheWorkspace(t *testing.T) {
-	if implementation.kind == "python" {
-		t.Skip("the Python runner needs PI_PROJECT")
-	}
 	f := newFixture(t, "hub")
 	garden := f.initialize("garden")
 	admin := f.initialize("admin")

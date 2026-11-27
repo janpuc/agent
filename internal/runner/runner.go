@@ -171,7 +171,7 @@ func lockRunner(name, state string) (*os.File, error) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%s: agent-run is already running", name)
+			return nil, fmt.Errorf("%s: the runner is already running", name)
 		}
 		return nil, err
 	}

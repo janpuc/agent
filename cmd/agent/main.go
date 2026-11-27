@@ -234,7 +234,7 @@ func run(args []string) error {
 			return projectEntry(home, command)
 		}
 	}
-	return errors.New("Usage: agent-run <registered-project>")
+	return errors.New("Usage: agent <registered-project>, or agent --help")
 }
 
 // helpRequest reports the forms that print the command guide instead of running a command.
@@ -746,7 +746,7 @@ func registerEntry(home string, args []string) error {
 		return err
 	}
 	if len(args) != 3 && len(args) != 4 {
-		return errors.New("Usage: agent-run <registered-project>")
+		return errors.New("Usage: agent --register <project> <member> [url]")
 	}
 	if !onHost(reg, host, args[1]) {
 		return fmt.Errorf("Unknown project: %s", args[1])
@@ -995,7 +995,7 @@ func overview(home string, args []string) error {
 // archived or not initialized yet before starting Pi.
 func projectRun(home string, reg *registry.Registry, host, name string) error {
 	if _, ok := reg.Projects[name]; !ok || reg.ProjectHost(name) != host {
-		return errors.New("Usage: agent-run <registered-project>")
+		return errors.New("Usage: agent --run <registered-project>")
 	}
 	if err := validateProjects(reg, home, host); err != nil {
 		return err

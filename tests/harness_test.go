@@ -1,12 +1,7 @@
 // Package tests drives the agent command from outside, through its command line, files and the
 // external tools it calls. Every external tool except git is a stub: this test binary, linked
-// under the tool's name. The suite runs against any implementation that keeps the command line
-// and on-disk formats, selected with AGENT_IMPL:
-//
-//	AGENT_IMPL=go AGENT_BIN=/path/to/agent go test ./tests
-//	AGENT_IMPL=python AGENT_BIN=/path/to/agent-run go test ./tests
-//
-// Without AGENT_BIN the suite builds ./cmd/agent and skips when it does not exist yet.
+// under the tool's name. AGENT_BIN=/path/to/agent tests a prebuilt command, and without it the
+// suite builds ./cmd/agent.
 package tests
 
 import (
@@ -24,8 +19,7 @@ import (
 )
 
 var implementation struct {
-	kind    string   // go or python
-	command []string // how to start the implementation
+	command []string // how to start the agent command
 	err     error
 }
 
@@ -33,22 +27,12 @@ func TestMain(m *testing.M) {
 	if stub, ok := stubs[filepath.Base(os.Args[0])]; ok {
 		os.Exit(stub())
 	}
-	implementation.kind = os.Getenv("AGENT_IMPL")
-	if implementation.kind == "" {
-		implementation.kind = "go"
-	}
 	bin := os.Getenv("AGENT_BIN")
 	dir, err := os.MkdirTemp("", "agent-build-")
 	if err != nil {
 		panic(err)
 	}
 	switch {
-	case implementation.kind == "python":
-		python, err := exec.LookPath("python3")
-		if err != nil || bin == "" {
-			implementation.err = errors.New("AGENT_IMPL=python needs python3 and AGENT_BIN")
-		}
-		implementation.command = []string{python, bin}
 	case bin != "":
 		implementation.command = []string{bin}
 	default:
@@ -216,9 +200,6 @@ func (f *fixture) exec(args ...string) result {
 
 // agent runs a user command such as agent ls.
 func (f *fixture) agent(args ...string) result {
-	if implementation.kind == "python" {
-		return f.exec(append([]string{"--launch"}, args...)...)
-	}
 	return f.exec(args...)
 }
 
@@ -227,17 +208,11 @@ func (f *fixture) internal(args ...string) result { return f.exec(args...) }
 
 // runner runs a project's generation loop, as its Rex tab does.
 func (f *fixture) runner(project string) result {
-	if implementation.kind == "python" {
-		return f.exec(project)
-	}
 	return f.exec("--run", project)
 }
 
 // operatorAsk sends a request as the operator from a laptop dispatch.
 func (f *fixture) operatorAsk(target, text string) result {
-	if implementation.kind == "python" {
-		return f.exec("--client-operator", "--launch", "ask", target, text)
-	}
 	return f.exec("--client-operator", "ask", target, text)
 }
 
