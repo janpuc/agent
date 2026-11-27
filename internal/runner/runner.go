@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/janpuc/agent/internal/registry"
+	"github.com/janpuc/agent/internal/requests"
 	"github.com/janpuc/agent/internal/workspace"
 )
 
@@ -142,7 +143,7 @@ func Loop(h Host, name, task string) (int, error) {
 			return 0, err
 		}
 		if terminated {
-			return code, nil
+			return taskExit(h, name, task, code)
 		}
 		if task == "" {
 			rotated, err := consumeRotation(folder, false)
@@ -157,8 +158,70 @@ func Loop(h Host, name, task string) (int, error) {
 		if workspace.Exists(filepath.Join(state, "restart-requested")) {
 			continue
 		}
+		return taskExit(h, name, task, code)
+	}
+}
+
+// taskExit turns a stopping task into one record the project cannot miss, and returns Pi's exit
+// code. A task reports its turns and its close on its own, but nothing survives Pi, so a run that
+// stops between those events leaves the project waiting on a child that is gone. The runner owns
+// the child process, so it is the one place that sees this. A closed task already reported.
+func taskExit(h Host, name, task string, code int) (int, error) {
+	if task == "" {
 		return code, nil
 	}
+	folder := filepath.Join(h.Root, name)
+	if workspace.Exists(filepath.Join(workspace.TaskState(folder, task), "closed")) {
+		return code, nil
+	}
+	if err := reportExit(folder, name, task, code); err != nil {
+		// The exit code stays Pi's: a failed report must not look like a failed run.
+		fmt.Fprintf(os.Stderr, "%s: task %s stopped without a report: %v\n", name, task, err)
+	}
+	return code, nil
+}
+
+// exitNotice is the inbox record a task's runner writes when the task stops without closing.
+// Kind keeps it out of the needs-Jan list, which only asks for items that want an answer.
+type exitNotice struct {
+	ID      string `json:"id"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Kind    string `json:"kind"`
+	Task    string `json:"task"`
+	Text    string `json:"text"`
+	Created string `json:"created"`
+	Status  string `json:"status"`
+}
+
+// reportExit writes the exit notice into the project's inbox, beside the reports and folds the
+// task's own extension writes, so the idle project hands it to the agent like any other item.
+func reportExit(folder, name, task string, code int) error {
+	meta, err := workspace.ReadTask(folder, task)
+	if err != nil {
+		return err
+	}
+	id, err := requests.NewID()
+	if err != nil {
+		return err
+	}
+	notice := exitNotice{
+		ID: id, From: name, To: name, Kind: "exit", Task: task,
+		Text: "Task " + task + " stopped without closing. Its Pi exited with code " + strconv.Itoa(code) +
+			" and the task is still " + meta.Status + ", so no turn of it is running now and nothing " +
+			"starts another. Read tasks/" + task + "/STATE.md and the task session before deciding.",
+		Created: requests.Timestamp(),
+		Status:  "new",
+	}
+	data, err := json.MarshalIndent(notice, "", "  ")
+	if err != nil {
+		return err
+	}
+	box := filepath.Join(folder, ".agent", "inbox")
+	if err := os.MkdirAll(box, 0o755); err != nil {
+		return err
+	}
+	return workspace.AtomicWrite(filepath.Join(box, id+".json"), append(data, '\n'))
 }
 
 // lockRunner takes the non-blocking runner lock, clears the stale pid and records this process.

@@ -20,7 +20,8 @@ implementation; the suite also runs against the earlier Python runner while it i
 - Requests: `agent ask <project> <text>` writes to that project's inbox, `agent reply` answers.
   A remote host reaches the hub through a restricted SSH forced command.
 - Tasks: `agent task new` opens a task folder and a tab next to the project. Closing never
-  deletes data.
+  deletes data. A task whose Pi stops without closing it writes one exit notice into the project
+  inbox, so a child that dies mid turn never waits on nobody.
 - Watchdog: `agent watch` is the one pass the host's timer runs, outside Rex, so a Rex restart
   never takes it down. It starts a project whose runner died and continues a session whose last
   turn ended on a provider stall.
