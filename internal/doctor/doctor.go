@@ -121,7 +121,8 @@ func projectProblems(h project.Host, name string, m mandatory) []string {
 }
 
 // notesProblems checks the heading contract of the two pages every project carries and of each
-// topic page, and reports a topic page that the knowledge index does not link.
+// topic page, and reports a topic page that the knowledge index does not link, with the index
+// line to paste so the owner writes no summary of their own.
 func notesProblems(ws string) []string {
 	lines := pageProblems(ws, "notes/PROJECT.md", projectHeadings, true)
 	lines = append(lines, pageProblems(ws, "notes/STATE.md", stateHeadings, true)...)
@@ -134,7 +135,7 @@ func notesProblems(ws string) []string {
 		rel := "notes/knowledge/" + filepath.Base(path)
 		lines = append(lines, pageProblems(ws, rel, topicHeadings, false)...)
 		if !bytes.Contains(index, []byte("knowledge/"+filepath.Base(path))) {
-			lines = append(lines, rel+": not in the knowledge index")
+			lines = append(lines, rel+": not in the knowledge index, add: "+indexLine(path))
 		}
 	}
 	return lines
@@ -144,6 +145,51 @@ func notesProblems(ws string) []string {
 func knowledgePages(ws string) []string {
 	pages, _ := filepath.Glob(filepath.Join(ws, "notes/knowledge/*.md"))
 	return pages
+}
+
+// indexLine is the knowledge index entry for one topic page: the link the index needs and the
+// first sentence of its Summary, which is the one line the standard asks for. Both come from the
+// page itself, so nothing is generated that its author did not write.
+func indexLine(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), ".md")
+	entry := "- [" + name + "](knowledge/" + name + ".md)"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return entry
+	}
+	if summary := summaryLine(string(data)); summary != "" {
+		entry += ": " + summary
+	}
+	return entry
+}
+
+// summaryLine is the first sentence of a topic page's Summary section, empty when the page has no
+// Summary section or nothing in it yet. The wrapped lines are joined before the cut, so the line an
+// owner pastes into the index does not stop mid sentence.
+func summaryLine(data string) string {
+	var lines []string
+	summary := false
+	for _, line := range strings.Split(data, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			if summary {
+				break
+			}
+			summary = trimmed == "## Summary"
+			continue
+		}
+		if summary && trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	text := strings.Join(lines, " ")
+	if end := strings.Index(text, ". "); end >= 0 {
+		return text[:end+1]
+	}
+	return text
 }
 
 // pageProblems checks one page: exactly one title, then its level-two headings in order. extra
