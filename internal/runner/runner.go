@@ -143,7 +143,8 @@ func Loop(h Host, name, task string) (int, error) {
 			return 0, err
 		}
 		if terminated {
-			return taskExit(h, name, task, code)
+			// The runner itself was told to stop, as agent restart all does, so no task stopped on its own.
+			return code, nil
 		}
 		if task == "" {
 			rotated, err := consumeRotation(folder, false)
