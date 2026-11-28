@@ -323,6 +323,9 @@ func Ask(reg *registry.Registry, home, host, root, target, text string, clientOp
 		return fmt.Errorf("%s is reserved for the laptop client", operator)
 	}
 	if sender == target {
+		if os.Getenv("PI_TASK") != "" {
+			return errors.New("Cannot ask your own project. A task reaches its coordinator through its turn report, which arrives by itself: put the request in your report and end your turn")
+		}
 		return errors.New("Cannot ask your own project, do the work yourself")
 	}
 	isRemote := reg.ProjectHost(target) != host

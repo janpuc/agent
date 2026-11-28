@@ -40,7 +40,7 @@ Projects
   archive <project>     Stop a project and retain all files      agent archive home
 
 Requests
-  ask <project> <text>   Ask the system's owner                   agent ask dotfiles "Update the standards"
+  ask <project> <text>   Ask the system's owner                   agent ask kubernetes "Raise the pod memory limit"
   reply <project> <id> <text>  Reply from the receiving project    agent reply home <id> "Verified"
   reply <project> <id> <text> --needs-jan  Ask the operator          agent reply kubernetes <id> "Needs a key" --needs-jan
 
