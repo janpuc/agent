@@ -306,13 +306,14 @@ func mainEndpoint(home string) error {
 }
 
 // hostPath puts mise shims, Homebrew and the Rex server helpers first on a macOS execution host,
-// where SSH and launchd sessions start without them. Clients are never passed here.
+// where SSH and launchd sessions start without them. Rex.app is the current name, Rex Beta.app the old one. Clients are never passed here.
 func hostPath(home string) {
 	if runtime.GOOS != "darwin" {
 		return
 	}
 	os.Setenv("PATH", strings.Join([]string{
 		filepath.Join(home, ".local/share/mise/shims"), "/opt/homebrew/bin",
+		"/Applications/Rex.app/Contents/Helpers/Rex Server.rex/Contents/MacOS",
 		"/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS",
 		os.Getenv("PATH")}, string(os.PathListSeparator)))
 }
